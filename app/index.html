@@ -2513,6 +2513,12 @@ async function loadDeck(){
     toast("Couldn't load people nearby — check your connection");
   }else{
     LIVEPOOL=remember(r.data||[]);
+    /* The server already leaves out everyone you have swiped on, so anyone
+       it DID send is someone you have not. A stale "seen" mark on this
+       device would hide them forever — which is what happened when swipes
+       failed to save: the card vanished here and never existed there. */
+    LIVEPOOL.forEach(a=>{ if(S.seen[a.id])delete S.seen[a.id]; });
+    save();
   }
   if(deckAgain){deckAgain=false;return loadDeck()}
   refreshDiscover();
