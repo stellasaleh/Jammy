@@ -1481,10 +1481,66 @@ function reasons(a,o){
   return r.slice(0,3);
 }
 
-function ALLBANDS(){return BANDS.concat(S.myBands||[])}
+/* Bands from the database, mapped into the shape the band screens already
+   expect. Rewriting those screens to a new shape would risk a lot of
+   working UI for no gain; translating the rows costs one function. */
+let LIVEBANDS=[];
+function bandFromRow(r){
+  return {
+    id:r.id, name:r.name, kind:"jammy", city:r.city||"",
+    genres:r.genres||[], about:r.about||"", formed:"",
+    myRole:r.my_role||"Member", avatar:r.avatar_path||null,
+    members:[], events:[],
+    _admin:!!r.i_am_admin, _count:r.member_count||1,
+    _next:r.next_at?{type:r.next_kind,at:r.next_at,place:r.next_place}:null
+  };
+}
+async function loadBands(){
+  if(!LIVE)return;
+  const r=await DB.myBands();
+  if(r.error)return;
+  LIVEBANDS=(r.data||[]).map(bandFromRow);
+  S.joined=LIVEBANDS.map(b=>b.id);
+  save();
+  if(document.querySelector("#bandlist.on"))openBandList();
+  renderChats();renderYou();
+}
+
+/* A band page needs its roster and its diary; one request each, and only
+   when the page is actually opened. */
+async function loadBandDetail(id){
+  if(!LIVE)return;
+  const b=LIVEBANDS.find(x=>x.id===id);if(!b)return;
+  const [rr,sr]=await Promise.all([DB.bandRoster(id),DB.bandSchedule(id)]);
+  if(!rr.error){
+    const people=[];
+    b.members=(rr.data||[]).map(m=>{
+      if(m.user_id)people.push(rowToArtist({
+        id:m.user_id,display_name:m.display_name,handle:m.handle,
+        photo_path:m.photo_path,instruments:m.instruments||[],genres:[]}));
+      return {id:m.user_id||null,name:m.display_name,
+              role:m.role_label||(m.instruments||[]).join(", ")||"Member",
+              admin:!!m.is_admin,offJammy:!m.on_jammy};
+    });
+    remember(people);
+  }
+  if(!sr.error){
+    b.events=(sr.data||[]).map(e=>({
+      id:e.id,type:e.kind,at:e.starts_at,place:e.place||"",
+      address:e.address||null,note:e.note||"",vis:e.visibility,
+      mine:!!e.mine
+    }));
+  }
+  if(viewingBand===id)openBand(id);
+}
+
+function ALLBANDS(){return LIVE?LIVEBANDS:BANDS.concat(S.myBands||[])}
 function Bnd(id){return ALLBANDS().find(b=>b.id===id)}
 function myBandList(){return ALLBANDS().filter(b=>S.joined.includes(b.id))}
-function bandEvents(b){return (b.events||[]).concat((S.bandEvents&&S.bandEvents[b.id])||[]).sort((x,y)=>new Date(x.at)-new Date(y.at))}
+function bandEvents(b){
+  const extra=LIVE?[]:((S.bandEvents&&S.bandEvents[b.id])||[]);
+  return (b.events||[]).concat(extra).sort((x,y)=>new Date(x.at)-new Date(y.at));
+}
 function nextEvent(b){const now=Date.now();return bandEvents(b).find(e=>new Date(e.at)>=now)||null}
 function bandMembers(b){return (b.members||[]).map(m=>m.id?{...m,p:A(m.id)}:{...m,p:null})}
 /* In live mode the people on screen come from the database, not from the
@@ -4180,10 +4236,12 @@ function openBandList(){
 $("#bl-back").onclick=()=>$("#bandlist").classList.remove("on");
 $("#bl-add").onclick=()=>openAddBand();
 
-let viewingBand=null;
+let viewingBand=null,bandDetailLoaded={};
 function openBand(id){
   const b=Bnd(id);if(!b)return;
+  const first=viewingBand!==id;
   viewingBand=id;
+  if(LIVE&&first&&!bandDetailLoaded[id]){bandDetailLoaded[id]=true;loadBandDetail(id)}
   $("#bv-name").textContent=b.name;
   $("#bv-sub").textContent=(b.kind==="jammy"?"On Jammy":"Listed")+" · "+esc(b.city||"");
   $("#bv-chat").style.display=(b.kind==="jammy"&&isBandMember(b))?"":"none";
@@ -4359,13 +4417,37 @@ $("#bv-chat").onclick=()=>{if(viewingBand){const id=viewingBand;
   $("#bandview").classList.remove("on");$("#bandlist").classList.remove("on");go("chats");openChat(id,true)}};
 
 /* joining a band updates your profile automatically */
-function joinBand(id,silent){
+async function joinBand(id,silent){
   if(S.joined.includes(id))return;
   const b=Bnd(id);if(!b)return;
+
+  if(LIVE){
+    const r=await DB.joinBandSrv(id,myInstruments(),S.me.role||null);
+    if(r.error){toast(authMessage(r.error));return}
+    await loadBands();await loadBandDetail(id);loadConvos();
+    if(!silent)toast("You're in "+b.name);
+    return;
+  }
+
   S.joined.push(id);
   if(b.kind==="jammy"&&!S.threads[id])S.threads[id]=(b.seed||[]).map(m=>({f:m.f,t:m.t}));
   save();renderYou();renderChats();
   if(!silent)toast("You're in "+b.name+" — it's on your profile now");
+}
+
+async function leaveBand(id){
+  const b=Bnd(id);if(!b)return;
+  if(LIVE){
+    const r=await DB.leaveBandSrv(id);
+    if(r.error){toast(authMessage(r.error));return}
+    await loadBands();loadConvos();
+    $("#bandview").classList.remove("on");
+    toast("You left "+b.name);
+    return;
+  }
+  S.joined=S.joined.filter(x=>x!==id);save();renderYou();renderChats();
+  $("#bandview").classList.remove("on");
+  toast("You left "+b.name);
 }
 
 function openAddBand(){
@@ -4381,14 +4463,30 @@ function openAddBand(){
       <textarea id="nb-mem" placeholder="Dana Whitfield, trumpet 2&#10;Luis Ferrer, horn"></textarea></div>
     <button class="btn" id="nb-go" style="width:100%">Add band</button>`;
   $("#sheet").classList.add("on");
-  $("#nb-go").onclick=()=>{
+  $("#nb-go").onclick=async()=>{
+    const btn=$("#nb-go");
     const name=$("#nb-name").value.trim();
     if(!name)return toast("Give the band a name");
+    const genres=$("#nb-gen").value.split(",").map(x=>x.trim()).filter(Boolean);
+    const city=$("#nb-city").value.trim();
+    const myRole=$("#nb-role").value.trim()||"Member";
+
+    if(LIVE){
+      btn.disabled=true;btn.textContent="Creating…";
+      const r=await DB.createBand({name,city,genres,myRole,myInstruments:myInstruments()});
+      btn.disabled=false;btn.textContent="Add band";
+      if(r.error){toast(authMessage(r.error));return}
+      const id=Array.isArray(r.data)?r.data[0]:r.data;
+      await loadBands();await loadBandDetail(id);loadConvos();
+      $("#sheet").classList.remove("on");renderYou();openBandList();openBand(id);
+      toast(name+" created");
+      return;
+    }
+
     const members=$("#nb-mem").value.split("\n").map(l=>l.trim()).filter(Boolean).map(l=>{
       const [n,...r]=l.split(",");return {name:n.trim(),role:(r.join(",")||"Member").trim()}});
-    const nb={id:"ub"+Date.now(),name,kind:"listed",city:$("#nb-city").value.trim(),
-      genres:$("#nb-gen").value.split(",").map(x=>x.trim()).filter(Boolean),
-      about:"",myRole:$("#nb-role").value.trim()||"Member",members,events:[],info:[]};
+    const nb={id:"ub"+Date.now(),name,kind:"listed",city,genres,
+      about:"",myRole,members,events:[],info:[]};
     S.myBands.push(nb);S.joined.push(nb.id);save();
     $("#sheet").classList.remove("on");renderYou();openBandList();openBand(nb.id);
     toast(name+" added to your bands");
@@ -4595,13 +4693,16 @@ function openAddEvent(bandId){
       <p class="dimtext" style="font-size:12px;margin:7px 0 0" id="ne-vishelp"></p></div>
     <button class="btn" id="ne-go" style="width:100%">Add it</button>`;
   $("#sheet").classList.add("on");
-  let vis="public";
+  /* Two different things were sharing one variable: what the person chose,
+     and what the rules force. A practice forces "members", and that then
+     looked like a choice — so switching to a gig afterwards kept it private
+     while the help text underneath said gigs are public by default. */
+  let vis="public",chosen=null;
   function syncVis(){
     const isGig=$("#ne-type").value==="gig";
     $("#ne-pub").style.display=isGig?"":"none";
     $("#ne-priv").textContent=isGig?"Private function":"Members only";
-    if(!isGig)vis="members";
-    else if(vis!=="members")vis="public";
+    vis=isGig?(chosen||"public"):"members";
     sb.querySelectorAll("#ne-vis .pick").forEach(x=>x.classList.toggle("on",x.dataset.v===vis));
     $("#ne-vishelp").textContent=isGig
       ? (vis==="public"
@@ -4611,17 +4712,44 @@ function openAddEvent(bandId){
   }
   $("#ne-type").onchange=syncVis;
   sb.querySelectorAll("#ne-vis .pick").forEach(o=>o.onclick=()=>{
-    vis=o.dataset.v;
+    chosen=o.dataset.v;
     sb.querySelectorAll("#ne-vis .pick").forEach(x=>x.classList.toggle("on",x.dataset.v===vis));
     syncVis();
   });
   syncVis();
-  $("#ne-go").onclick=()=>{
+  $("#ne-go").onclick=async()=>{
+    const btn=$("#ne-go");
     const [h,m]=$("#ne-time").value.split(":").map(Number);
     const type=$("#ne-type").value;
-    const ev={id:"ue"+Date.now(),type,at:nextDow(+$("#ne-day").value,h||19,m||0),
-      vis:type==="gig"?vis:"members",
-      place:$("#ne-place").value.trim(),note:$("#ne-note").value.trim(),myJob:$("#ne-job").value.trim()};
+    const at=nextDow(+$("#ne-day").value,h||19,m||0);
+    const place=$("#ne-place").value.trim();
+    const note=$("#ne-note").value.trim();
+    const job=$("#ne-job").value.trim();
+
+    if(LIVE){
+      btn.disabled=true;btn.textContent="Adding…";
+      const r=await DB.addBandEvent(bandId,{
+        kind:type,
+        startsAt:new Date(at).toISOString(),
+        place,
+        /* The address only travels for the people who have to turn up.
+           The database refuses to publish a rehearsal whatever we send. */
+        address:place||null,
+        note:[note,job?"You: "+job:""].filter(Boolean).join(" — ")||null,
+        visibility:type==="gig"?vis:"members"
+      });
+      btn.disabled=false;btn.textContent="Add";
+      if(r.error){toast(authMessage(r.error));return}
+      bandDetailLoaded[bandId]=true;
+      await loadBandDetail(bandId);
+      await loadBands();
+      $("#sheet").classList.remove("on");openBand(bandId);
+      toast(EV_LABEL[type]+" added · "+dayPhrase(at)+" at "+clock(at));
+      return;
+    }
+
+    const ev={id:"ue"+Date.now(),type,at,
+      vis:type==="gig"?vis:"members",place,note,myJob:job};
     S.bandEvents[bandId]=(S.bandEvents[bandId]||[]).concat([ev]);save();
     $("#sheet").classList.remove("on");openBand(bandId);
     toast(EV_LABEL[ev.type]+" added · "+dayPhrase(ev.at)+" at "+clock(ev.at));
@@ -4919,6 +5047,17 @@ const DB = {
 
   requests(){ return JammyAPI.discover.requests(); },
 
+  /* ---- bands ---- */
+  myBands(){ return JammyAPI.bands.mine(); },
+  bandRoster(id){ return JammyAPI.bands.roster(id); },
+  bandSchedule(id){ return JammyAPI.bands.schedule(id); },
+  createBand(f){ return JammyAPI.bands.create(f); },
+  joinBandSrv(id,inst,role){ return JammyAPI.bands.join(id,inst,role); },
+  leaveBandSrv(id){ return JammyAPI.bands.leave(id); },
+  addBandEvent(id,ev){ return JammyAPI.bands.addEvent(id,ev); },
+  cancelBandEvent(id){ return JammyAPI.bands.cancelEvent(id); },
+  mySchedule(days){ return JammyAPI.bands.schedule_mine(days); },
+
   /* ---- safety ---- */
   block(id){ return JammyAPI.safety.block(id); },
   unblock(id){ return JammyAPI.safety.unblock(id); },
@@ -5125,7 +5264,7 @@ function renderStep(){
           /* Signed in. If a profile already exists, this is a returning
              user and the rest of onboarding is just in their way. */
           const me=await DB.loadMe();
-          if(me.data){adoptProfile(me.data);S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();
+          if(me.data){adoptProfile(me.data);S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();
             $("#onb").classList.remove("on");go("disc");toast("Welcome back");return}
         }
         obGo(3);toast("Verified");
@@ -5298,7 +5437,7 @@ async function finishOnboarding(){
   }else if(obDraft.loc){
     S.me.loc=obDraft.loc;
   }
-  S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();obGo(10);
+  S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();obGo(10);
 }
 $("#ob-back").onclick=()=>obGo(obStep-1);
 $("#ob-skip").onclick=()=>obGo(obStep+1);
@@ -5329,7 +5468,7 @@ async function resumeSession(){
   if(me.data){
     adoptProfile(me.data);S.onboarded=true;save();
     $("#onb").classList.remove("on");renderAll();
-    loadDeck();loadConvos();loadRequests();
+    loadDeck();loadConvos();loadRequests();loadBands();
     setTimeout(()=>locateOnLaunch(),250);
   }else{
     /* Signed in, but the profile was never finished — drop them back

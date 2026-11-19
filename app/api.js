@@ -322,76 +322,54 @@
 
   /* ---------------- BANDS ---------------- */
   const bands = {
-    mine: () =>
-      call(() =>
-        sb.from("band_members")
-          .select("band_id, role_label, instruments, bands(*)")
-      ),
+    /* Each of these answers a whole screen in one request. The older
+       versions below fetched a band, then its roster, then its diary,
+       then a profile per member — about a dozen round trips to draw one
+       page, every time it opened. */
+    mine: () => call(() => sb.rpc("my_bands")),
+    roster: (bandId) => call(() => sb.rpc("band_roster", { b: bandId })),
+    schedule: (bandId) => call(() => sb.rpc("band_schedule", { b: bandId })),
 
-    create: (fields) =>
-      call(async () => {
-        const me = await uid();
-        const { data: band, error } = await sb.from("bands").insert({
-          name: fields.name,
-          kind: fields.kind || "jammy",
-          city: fields.city,
-          genres: fields.genres || [],
-          about: fields.about,
-          created_by: me,
-        }).select().single();
-        if (error) return { data: null, error };
-        await sb.from("band_members").insert({
-          band_id: band.id,
-          user_id: me,
-          instruments: fields.myInstruments || [],
-          role_label: fields.myRole,
-          is_admin: true,
-        });
-        return { data: band, error: null };
-      }),
+    /* Creating a band, joining it and opening its group chat are one act.
+       Split across three calls, any one can fail and leave a band with
+       nobody in it. */
+    create: (f) =>
+      call(() => sb.rpc("create_band", {
+        p_name: f.name,
+        p_city: f.city || null,
+        p_genres: f.genres || [],
+        p_about: f.about || null,
+        p_my_instruments: f.myInstruments || [],
+        p_my_role: f.myRole || null,
+      })),
 
-    members: (bandId) =>
-      call(() =>
-        sb.from("band_members")
-          .select("id, user_id, display_name, instruments, role_label, is_admin, profiles(display_name, handle, city, photo_path)")
-          .eq("band_id", bandId)
-      ),
+    join: (bandId, instruments, role) =>
+      call(() => sb.rpc("join_band", {
+        b: bandId, p_instruments: instruments || [], p_role: role || null,
+      })),
 
-    /* RLS decides what comes back here: members get everything,
-       everyone else gets announced gigs only */
-    events: (bandId) =>
-      call(() =>
-        sb.from("band_events")
-          .select("*, event_tasks(task, done, user_id)")
-          .eq("band_id", bandId)
-          .gte("starts_at", new Date(Date.now() - 86400000).toISOString())
-          .order("starts_at", { ascending: true })
-      ),
+    leave: (bandId) => call(() => sb.rpc("leave_band", { b: bandId })),
 
     addEvent: (bandId, ev) =>
-      call(async () => {
-        const me = await uid();
-        const { data: row, error } = await sb.from("band_events").insert({
-          band_id: bandId,
-          kind: ev.kind,
-          starts_at: ev.startsAt,
-          place: ev.place,
-          address: ev.address || null,
-          note: ev.note || null,
-          private_function: !!ev.privateFunction,
-          created_by: me,
-        }).select().single();
-        if (error) return { data: null, error };
-        if (ev.myTask) {
-          await sb.from("event_tasks").insert({
-            event_id: row.id, user_id: me, task: ev.myTask,
-          });
-        }
-        return { data: row, error: null };
-      }),
+      call(() => sb.rpc("add_band_event", {
+        b: bandId,
+        p_kind: ev.kind,
+        p_starts_at: ev.startsAt,
+        p_place: ev.place || null,
+        p_address: ev.address || null,
+        p_note: ev.note || null,
+        p_ends_at: ev.endsAt || null,
+        p_visibility: ev.visibility || null,
+      })),
 
-    setEventVisibility: (eventId, visibility) =>
-      call(() => sb.from("band_events").update({ visibility }).eq("id", eventId)),
+    cancelEvent: (eventId) => call(() => sb.rpc("cancel_band_event", { e: eventId })),
+
+    /* everything coming up across all your bands — what reminders read */
+    schedule_mine: (days) => call(() => sb.rpc("my_schedule", { days: days || 30 })),
+
+    /* for people who only want to listen */
+    gigsNearMe: (miles, days) =>
+      call(() => sb.rpc("gigs_near_me", { radius_miles: miles ?? 25, days: days || 30 })),
 
     media: (bandId) =>
       call(() =>
@@ -399,6 +377,7 @@
           .order("created_at", { ascending: false })
       ),
   };
+
 
   /* ---------------- FEED ---------------- */
   const feed = {
