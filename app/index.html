@@ -1255,11 +1255,18 @@ function locFresh(){
   const l=S.me&&S.me.loc;
   return !!(l&&l.lat&&l.at&&(Date.now()-new Date(l.at).getTime())<LOC_FRESH_MS);
 }
+/* Whether the DATABASE has our location — not whether this device thinks it
+   does. Matching happens server-side, so that is the only version that counts,
+   and the empty Discover screen needs to know which story to tell. */
+let srvLoc=false;
 function setLoc(lat,lng,label,source){
   S.me.loc={lat:coarse(lat),lng:coarse(lng),label:label||"your area",
             source:source||"manual",at:new Date().toISOString()};
   save();
-  if(LIVE&&window.JammyAPI)JammyAPI.profile.setLocation(S.me.loc.lat,S.me.loc.lng,S.me.loc.label);
+  if(LIVE&&window.JammyAPI){
+    JammyAPI.profile.setLocation(S.me.loc.lat,S.me.loc.lng,S.me.loc.label)
+      .then(r=>{ if(!r.error){srvLoc=true;if(S.filters&&S.filters.view)refreshDiscover()} });
+  }
   return S.me.loc;
 }
 
@@ -2517,6 +2524,30 @@ function renderDeck(){
   if(!q.length){
     const f=S.filters;
     const wider=RINGS.find(r=>r===0||r>f.radius);
+
+    /* An empty deck in live mode is nearly always one of two things, and
+       the old message named neither. Without a location Jammy can only
+       match on the city you typed, so "Boston" and "Somerville" never see
+       each other — which looks exactly like nobody being out there. */
+    if(LIVE&&!srvLoc){
+      const e2=el("div","empty",`<h3>Nobody yet — and Jammy can't tell where you are</h3>
+        <p>Without your location, Jammy can only match you with people who typed
+        the <b>same city</b> as you. Someone two miles away who wrote a different
+        neighbourhood won't show up.</p>`);
+      const b=el("button","btn","Use my location");
+      b.style.marginTop="14px";
+      b.onclick=async()=>{b.disabled=true;b.textContent="Locating…";
+        await locateOnLaunch(true);b.disabled=false;b.textContent="Use my location";
+        loadDeck();};
+      e2.appendChild(b);
+      const b2=el("button","btn ghost","Edit my city instead");
+      b2.style.cssText="margin-top:9px";
+      b2.onclick=()=>{go("you");setTimeout(()=>editProfile&&editProfile(),120)};
+      e2.appendChild(b2);
+      d.appendChild(e2);
+      return;
+    }
+
     const e=el("div","empty",`<h3>Nobody matches that yet</h3>
       <p>${f.radius>0?"No one within "+f.radius+" miles fits these filters.":"No one fits these filters."}
       ${POOL().filter(a=>!S.seen[a.id]).length?" Loosening the distance usually helps most.":" You've seen everyone — reset the deck below."}</p>`);
@@ -4731,6 +4762,7 @@ function authMessage(e){
 /* A real profiles row from the database, adopted as "me". */
 function adoptProfile(r){
   if(!r)return;
+  srvLoc=!!r.location;
   S.me={...ME_DEFAULT,
     id:r.id,
     name:r.display_name||"You",

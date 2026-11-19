@@ -165,10 +165,15 @@
       const r = (n) => Math.round(n * 100) / 100; // ~1.1km
       return call(async () => {
         const me = await uid();
-        return sb.from("profiles").update({
-          city: label || null,
-          location: `SRID=4326;POINT(${r(lng)} ${r(lat)})`,
-        }).eq("id", me);
+        /* Only write the city when we actually learned one. This used to
+           overwrite whatever the person typed at sign-up with the nearest
+           name the device guessed — so "Jamaica Plain" silently became
+           "Boston", or worse, "your area". The city is their words about
+           where they play; the coordinates are ours. */
+        const patch = { location: `SRID=4326;POINT(${r(lng)} ${r(lat)})` };
+        const clean = (label || "").trim();
+        if (clean && clean.toLowerCase() !== "your area") patch.city = clean;
+        return sb.from("profiles").update(patch).eq("id", me);
       });
     },
   };
