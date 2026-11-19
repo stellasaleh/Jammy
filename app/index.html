@@ -676,7 +676,12 @@ nav .nb{position:absolute;top:4px;right:calc(50% - 20px);background:var(--mag);c
 .crow .r{text-align:right;flex:none}
 .crow .r i{font-style:normal;font-size:11px;color:var(--dim);display:block}
 .crow .r .u{margin-top:5px;background:var(--mag);color:#fff;font-size:10.5px;font-weight:700;border-radius:999px;padding:1px 7px;display:inline-block}
-#chat,#call,#sheet{position:absolute;inset:0;z-index:30;display:none;flex-direction:column;background:var(--bg)}
+/* Above the band screens, not below them. A sheet opened from the band
+   list or a band page used to render underneath it: visible, enabled and
+   impossible to click, because the panel was still catching every tap.
+   Stacking order, top down: onboarding 95, toast 80, modal 70, these 40,
+   panels 32, the app 5. */
+#chat,#call,#sheet{position:absolute;inset:0;z-index:40;display:none;flex-direction:column;background:var(--bg)}
 #chat.on,#call.on,#sheet.on{display:flex}
 .chead{flex:none;display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line);background:var(--surface)}
 .chead .av{width:38px;height:38px}
@@ -1062,7 +1067,11 @@ const RINGS=[3,7,15,30,100,0];  /* 0 = unlimited */
 const ME_DEFAULT={id:"me",name:"You",handle:"@you",city:"Boston",role:"Trumpet",
   instruments:["Trumpet"],days:["Wed","Thu"],loc:{lat:42.3601,lng:-71.0589,label:"Boston"},
   genres:"Indie, soul",want:"A band that gigs monthly",bio:"Write your bio — what you play, what you're after, what you sound like on a good night.",
-  key:"A minor",bpm:104,tracks:[{title:"Kitchen Demo",key:"A minor",bpm:104,plays:412}]};
+  key:"A minor",bpm:104,
+  /* The demo needs something to play. A real account must start empty —
+     nobody wants a recording on their profile they did not make, with a
+     play count they did not earn. */
+  tracks:[{title:"Kitchen Demo",key:"A minor",bpm:104,plays:412}]};
 
 const HOME={lat:42.3601,lng:-71.0589,label:"Boston"};
 
@@ -5127,7 +5136,8 @@ function adoptProfile(r){
     days:r.rehearsal_days||[],
     photo:r.photo_path||null,
     loc:S.me&&S.me.loc?S.me.loc:{...HOME},
-    tracks:(S.me&&S.me.tracks)||[]};
+    /* never carry the demo's recording into a real account */
+    tracks:(S.me&&S.me.tracks||[]).filter(t=>t&&t.title!=="Kitchen Demo")};
   S.account=Object.assign({},S.account,{serverId:r.id});
 }
 
