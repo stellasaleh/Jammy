@@ -161,18 +161,19 @@
     /* Snap the location to ~1km before it ever leaves the device.
        Storing exact coordinates for a stranger-meeting app is a
        safety problem, not a precision tradeoff. */
-    async setLocation(lat, lng, label) {
+    /* The city is the person's own words about where they play. Automatic
+       location detection never touches it — it writes coordinates only.
+       It used to write a guessed place name every launch, which meant a
+       stale value on one device would overwrite a correction made
+       anywhere else, on every single page load. Only a deliberate choice
+       (the location picker, or editing the profile) passes writeCity. */
+    async setLocation(lat, lng, label, writeCity) {
       const r = (n) => Math.round(n * 100) / 100; // ~1.1km
       return call(async () => {
         const me = await uid();
-        /* Only write the city when we actually learned one. This used to
-           overwrite whatever the person typed at sign-up with the nearest
-           name the device guessed — so "Jamaica Plain" silently became
-           "Boston", or worse, "your area". The city is their words about
-           where they play; the coordinates are ours. */
         const patch = { location: `SRID=4326;POINT(${r(lng)} ${r(lat)})` };
         const clean = (label || "").trim();
-        if (clean && clean.toLowerCase() !== "your area") patch.city = clean;
+        if (writeCity && clean && clean.toLowerCase() !== "your area") patch.city = clean;
         return sb.from("profiles").update(patch).eq("id", me);
       });
     },

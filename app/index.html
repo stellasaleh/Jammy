@@ -1264,7 +1264,8 @@ function setLoc(lat,lng,label,source){
             source:source||"manual",at:new Date().toISOString()};
   save();
   if(LIVE&&window.JammyAPI){
-    JammyAPI.profile.setLocation(S.me.loc.lat,S.me.loc.lng,S.me.loc.label)
+    /* Only a location the person chose themselves may rename their city. */
+    JammyAPI.profile.setLocation(S.me.loc.lat,S.me.loc.lng,S.me.loc.label,source==="manual")
       .then(r=>{ if(!r.error){srvLoc=true;if(S.filters&&S.filters.view)refreshDiscover()} });
   }
   return S.me.loc;
@@ -4763,6 +4764,9 @@ function authMessage(e){
 function adoptProfile(r){
   if(!r)return;
   srvLoc=!!r.location;
+  /* The database is the truth for the city. A stale value cached on one
+     device must never win over a correction made somewhere else. */
+  if(r.city&&S.me&&S.me.loc&&!r.location)S.me.loc.label=r.city;
   S.me={...ME_DEFAULT,
     id:r.id,
     name:r.display_name||"You",
