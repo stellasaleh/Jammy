@@ -3052,6 +3052,14 @@ function renderChats(){
           <button class="rbtn pass" data-req-no="${p.id}" aria-label="Decline ${esc(p.name)}">Decline</button>
           <button class="rbtn yes" data-req-yes="${p.id}" aria-label="Approve ${esc(p.name)}">Approve</button>
         </div>`;
+      /* Wire these here rather than relying on the page-wide click handler,
+         which listens on the feed and never sees a click in Chats. */
+      row.querySelector("[data-req-yes]").onclick=ev=>{
+        ev.preventDefault();ev.stopPropagation();answerRequest(p.id,true);
+      };
+      row.querySelector("[data-req-no]").onclick=ev=>{
+        ev.preventDefault();ev.stopPropagation();answerRequest(p.id,false);
+      };
       c.appendChild(row);
     });
   }
