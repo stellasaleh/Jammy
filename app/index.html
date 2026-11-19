@@ -1204,9 +1204,16 @@ function myLoc(){return (S.me&&S.me.loc)||HOME}
    person's coordinates, so there is nothing here to measure from. */
 function distTo(a){
   if(a&&typeof a._miles==="number")return a._miles;
+  if(a&&a._miles===null)return null;          /* matched on city, not measured */
   return distMiles(myLoc(),{lat:a.lat,lng:a.lng});
 }
-function distLabel(mi){return mi<1?(Math.round(mi*10)/10)+" mi":mi<10?mi.toFixed(1)+" mi":Math.round(mi)+" mi"}
+/* A distance we don't have is not zero miles. Someone who declined the
+   location prompt is matched on city instead, and the card should say so
+   rather than print a number nobody measured. */
+function distLabel(mi){
+  if(mi===null||mi===undefined||!isFinite(mi))return "Same city";
+  return mi<1?(Math.round(mi*10)/10)+" mi":mi<10?mi.toFixed(1)+" mi":Math.round(mi)+" mi";
+}
 
 /* ============================================================
    LOCATION
@@ -1405,7 +1412,7 @@ function overlap(a){
       theyNeedMe:a._needsMe||[],
       iNeedThem:(S.filters.needs||[]).filter(n=>(a.instruments||[]).some(i=>fam(i)===fam(n))),
       sharedDays:[],
-      mi:typeof a._miles==="number"?a._miles:0,
+      mi:typeof a._miles==="number"?a._miles:null,
       score:Math.round(Math.min(100,a._fit))
     };
   }
@@ -2485,7 +2492,7 @@ function dcard(a,layer){
   const tr=a.tracks[0],uid=a.id+":"+tr.title,o=overlap(a);
   const c=el("div","dcard"+(layer?" s"+layer:""));c.dataset.id=a.id;
   c.innerHTML=`<div class="hero">${art(hash(a.id),initials(a.name),{size:170})}
-      <div class="badge-dist">${isRemoteMatch(a)?"Remote · "+esc(a.city)+" · "+distLabel(o.mi):distLabel(o.mi)+" · "+esc(a.city)}</div>
+      <div class="badge-dist">${isRemoteMatch(a)?"Remote · "+esc(a.city)+" · "+distLabel(o.mi):(o.mi===null?esc(a.city):distLabel(o.mi)+" · "+esc(a.city))}</div>
       <div class="mscore"><i></i>${o.score}% fit</div>
       <div class="stamp y">CONNECT</div><div class="stamp n">SKIP</div></div>
     <div class="info">
