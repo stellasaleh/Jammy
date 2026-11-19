@@ -191,6 +191,8 @@ nav .nb{position:absolute;top:4px;right:calc(50% - 20px);background:var(--mag);c
 .pacts button.on svg{fill:currentColor}
 .pacts .connect{margin-left:auto;color:var(--mag);border:1px solid rgba(229,40,92,.4);padding:5px 12px;border-radius:999px;font-size:12.5px}
 .pacts .connect.done{color:var(--mint);border-color:var(--line)}
+/* asked, and waiting on them — not the same thing as connected */
+.pacts .connect.waiting{color:var(--amber);border-color:rgba(245,130,32,.45)}
 
 /* sponsored */
 .ad{border-left:3px solid var(--amber)}
@@ -1823,7 +1825,7 @@ function postEl(post){
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M21 11.5a8 8 0 0 1-11.6 7.1L4 20l1.4-4.6A8 8 0 1 1 21 11.5z"/></svg>${commentsOf(post.id).length}</button>
       <button data-save="${post.id}" class="${saved?"on":""}" aria-label="Save post" aria-pressed="${saved}">
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 4h12v16l-6-4-6 4z"/></svg></button>
-      ${!mine&&post.type!=="looking"?`<button class="connect ${connected(post.who)?"done":""}" data-conn="${post.who}">${connected(post.who)?"Connected":"Connect"}</button>`:""}
+      ${!mine&&post.type!=="looking"?`<button class="connect ${connected(post.who)?"done":(S.requested&&S.requested[post.who]?"waiting":"")}" data-conn="${post.who}">${connected(post.who)?"Connected":(S.requested&&S.requested[post.who]?"Requested":"Connect")}</button>`:""}
     </div>`;
   return d;
 }
@@ -2254,18 +2256,52 @@ function openComments(postId){
   });
 }
 
-function connect(id,silent){
+/* People you have asked to play with, who haven't answered yet. Kept on
+   this device only — the server already knows, this is just so the button
+   can say "Requested" instead of forgetting you ever pressed it. */
+S.requested=S.requested||{};
+
+/* Connecting is not something this app can decide on its own. Both people
+   have to say yes, and only the server can see the other half of that. The
+   Connect button used to add the person to a list on this device and show
+   "Connected" — which was simply untrue. The server never heard about it,
+   so no conversation existed, and every message afterwards failed. */
+async function connect(id,silent){
   const p=A(id);if(!p)return;
   if(connected(id)){openChat(id);return}
-  S.connections.unshift(id);
-  /* Only the demo invents an opening message. A real new connection
-     starts with an empty thread, the way it actually is. */
-  if(!LIVE){
-    S.threads[id]=S.threads[id]||[{f:"them",t:(p.replies&&p.replies[0])||"Hey!"}];
-    S.unread[id]=1;
+
+  if(LIVE){
+    if(S.requested[id]){toast("Already asked — waiting on "+p.name.split(" ")[0]);return}
+    S.requested[id]=true;save();renderFeed();
+    const r=await DB.swipe(id,"yes");
+    if(r.error){
+      delete S.requested[id];save();renderFeed();
+      toast(authMessage(r.error));
+      return;
+    }
+    const row=Array.isArray(r.data)?r.data[0]:r.data;
+    const matched=!!(row&&(row.matched||row.is_match));
+    if(!matched){
+      toast("Asked "+p.name.split(" ")[0]+" — you'll connect when they say yes");
+      return;
+    }
+    delete S.requested[id];
+    S.connections.unshift(id);
+    save();updateBadge();renderFeed();renderChats();
+    loadConvos();
+    if(!silent)showMatch(p,id);
+    return;
   }
+
+  S.connections.unshift(id);
+  S.threads[id]=S.threads[id]||[{f:"them",t:(p.replies&&p.replies[0])||"Hey!"}];
+  S.unread[id]=1;
   save();updateBadge();renderFeed();renderChats();
-  if(!silent){
+  if(!silent)showMatch(p,id);
+}
+
+function showMatch(p,id){
+  {
     $("#md-a").innerHTML=meAvatar();
     $("#md-b").innerHTML=avatarOf(p);
     $("#md-sub").textContent=`${p.name} plays ${p.role.split(" ·")[0].toLowerCase()} in ${p.city} and is looking for ${p.want.toLowerCase()}.`;
@@ -3872,17 +3908,59 @@ const REPORT_REASONS=[
  ["other","Something else","Tell us what happened."]
 ];
 function isBlocked(id){return (S.blocks||[]).some(b=>b.id===id)}
-function blockUser(id,reason,note){
-  if(isBlocked(id))return;
+/* Blocking has to be real. A block that only exists on this phone leaves
+   the other person able to find you, message you and see your posts from
+   theirs — which is the opposite of what the button promises, and the first
+   thing an app reviewer tries. The screen updates immediately because
+   waiting on the network while someone is trying to get away from another
+   person is the wrong trade; if the server refuses, it is put back and
+   said plainly. */
+async function blockUser(id,reason,note){
+  if(isBlocked(id))return true;
+  const before={blocks:(S.blocks||[]).slice(),connections:S.connections.slice(),
+                thread:S.threads[id],unread:S.unread[id],seen:S.seen[id]};
   S.blocks=(S.blocks||[]).concat([{id,reason:reason||null,note:note||"",at:new Date().toISOString()}]);
   S.connections=S.connections.filter(c=>c!==id);
   delete S.threads[id];delete S.unread[id];
   S.seen[id]="blocked";
-  save();
+  save();renderAll();
+
+  if(!LIVE)return true;
+  const r=await DB.block(id);
+  if(r.error){
+    S.blocks=before.blocks;S.connections=before.connections;
+    if(before.thread)S.threads[id]=before.thread;
+    if(before.unread)S.unread[id]=before.unread;
+    if(before.seen)S.seen[id]=before.seen;else delete S.seen[id];
+    save();renderAll();
+    toast("Couldn't block them — "+authMessage(r.error));
+    return false;
+  }
+  loadConvos();
+  return true;
 }
-function unblockUser(id){
+async function unblockUser(id){
+  const before=(S.blocks||[]).slice();
   S.blocks=(S.blocks||[]).filter(b=>b.id!==id);
-  delete S.seen[id];save();
+  delete S.seen[id];save();renderAll();
+  if(!LIVE)return true;
+  const r=await DB.unblock(id);
+  if(r.error){
+    S.blocks=before;save();renderAll();
+    toast("Couldn't unblock them — "+authMessage(r.error));
+    return false;
+  }
+  loadConvos();
+  return true;
+}
+
+/* A report nobody receives is worse than no report button at all: it tells
+   someone their complaint is being handled when it is going nowhere. */
+async function reportUser(id,reason,note,opts){
+  if(!LIVE)return true;
+  const r=await DB.report(Object.assign({userId:id,reason,note},opts||{}));
+  if(r.error){toast("Couldn't send that report — "+authMessage(r.error));return false}
+  return true;
 }
 function openReport(id){
   const p=A(id);if(!p)return;
@@ -3910,16 +3988,30 @@ function openReport(id){
     $("#rp-send").disabled=false;
   });
   $("#rp-block").onclick=()=>$("#rp-block").classList.toggle("on");
-  $("#rp-send").onclick=()=>{
-    const note=($("#rp-note")&&$("#rp-note").value||"").trim();
+  $("#rp-send").onclick=async()=>{
+    const btn=$("#rp-send"),note=($("#rp-note")&&$("#rp-note").value||"").trim();
+    const alsoBlock=$("#rp-block").classList.contains("on");
+    btn.disabled=true;btn.textContent="Sending…";
+    /* The report goes first. If it cannot be filed we say so instead of
+       claiming it was — "Report filed" when nothing left the device is the
+       kind of lie that gets someone hurt. */
+    const sent=await reportUser(id,reason,note);
+    btn.disabled=false;btn.textContent="Send report";
+    if(!sent)return;
     S.reports=(S.reports||[]).concat([{id,reason,note,at:new Date().toISOString()}]);
-    if($("#rp-block").classList.contains("on"))blockUser(id,reason,note);
-    save();$("#sheet").classList.remove("on");
+    save();
+    let blocked=true;
+    if(alsoBlock)blocked=await blockUser(id,reason,note);
+    $("#sheet").classList.remove("on");
     refreshDiscover();renderFeed();renderChats();renderYou();
-    toast("Report filed"+($("#rp-block")&&isBlocked(id)?" and "+p.name.split(" ")[0]+" blocked":""));
+    toast("Report filed"+(alsoBlock&&blocked?" and "+p.name.split(" ")[0]+" blocked":""));
   };
-  $("#rp-blockonly").onclick=()=>{
-    blockUser(id,null,"");$("#sheet").classList.remove("on");
+  $("#rp-blockonly").onclick=async()=>{
+    const btn=$("#rp-blockonly");btn.disabled=true;
+    const ok=await blockUser(id,null,"");
+    btn.disabled=false;
+    if(!ok)return;
+    $("#sheet").classList.remove("on");
     refreshDiscover();renderFeed();renderChats();renderYou();
     toast(p.name.split(" ")[0]+" blocked");
   };
@@ -4734,7 +4826,13 @@ const DB = {
   sendText(convoId,body){ return JammyAPI.chat.send(convoId,body); },
   markRead(convoId){ return JammyAPI.chat.markRead(convoId); },
   watchThread(convoId,cb){ return JammyAPI.chat.subscribe(convoId,cb); },
-  stopThread(ch){ if(ch)JammyAPI.chat.unsubscribe(ch); }
+  stopThread(ch){ if(ch)JammyAPI.chat.unsubscribe(ch); },
+
+  /* ---- safety ---- */
+  block(id){ return JammyAPI.safety.block(id); },
+  unblock(id){ return JammyAPI.safety.unblock(id); },
+  blockedList(){ return JammyAPI.safety.blocked(); },
+  report(payload){ return JammyAPI.safety.report(payload); }
 };
 
 /* Show an onboarding failure where it can actually be read, and keep the
