@@ -2939,12 +2939,12 @@ async function answerRequest(id,yes){
     loadRequests();
     return;
   }
-  if(!yes){toast("Passed");return}
+  if(!yes){toast("Declined");return}
   const row=Array.isArray(r.data)?r.data[0]:r.data;
   if(row&&(row.matched||row.is_match)){
     if(!connected(id))S.connections.unshift(id);
     save();loadConvos();
-    toast("You're connected with "+((p&&p.name.split(" ")[0])||"them"));
+    toast("Connected with "+((p&&p.name.split(" ")[0])||"them"));
   }
 }
 
@@ -3043,22 +3043,14 @@ function renderChats(){
 
   if(LIVE&&REQUESTS.length){
     c.appendChild(el("div","sechead",
-      `<h2>Wants to play with you</h2><span class="reqn">${REQUESTS.length}</span>`));
+      `<h2>Requests</h2><span class="reqn">${REQUESTS.length}</span>`));
     REQUESTS.forEach(p=>{
-      /* Use what the server sent about THIS request. The general scorer
-         needs a fit value that a request row doesn't carry, and quietly
-         falls back to demo logic that always comes up empty. */
-      const needs=p._needsMe||[],shared=p._shared||[];
-      const why=needs.length
-        ? "Needs "+(/^[aeiou]/i.test(needs[0])?"an ":"a ")+needs[0].toLowerCase()
-        : (shared.length?"Also plays "+shared[0]:(p.role||"Musician"));
       const row=el("div","reqrow");
       row.innerHTML=`<div class="av" style="width:52px;height:52px">${avatarOf(p)}</div>
-        <div class="t"><b>${esc(p.name)}</b><span>${esc(why)} · ${esc(p.city||"")}${
-          typeof p._miles==="number"?" · "+distLabel(p._miles):""}</span></div>
+        <div class="t"><b>${esc(p.name)}</b><span>${esc([p.role,p.city].filter(Boolean).join(" · "))}</span></div>
         <div class="ra">
-          <button class="rbtn pass" data-req-no="${p.id}" aria-label="Pass on ${esc(p.name)}">Pass</button>
-          <button class="rbtn yes" data-req-yes="${p.id}" aria-label="Connect with ${esc(p.name)}">Connect</button>
+          <button class="rbtn pass" data-req-no="${p.id}" aria-label="Decline ${esc(p.name)}">Decline</button>
+          <button class="rbtn yes" data-req-yes="${p.id}" aria-label="Approve ${esc(p.name)}">Approve</button>
         </div>`;
       c.appendChild(row);
     });
