@@ -779,6 +779,25 @@ nav .nb{position:absolute;top:4px;right:calc(50% - 20px);background:var(--mag);c
   background-color:var(--surface);border:1px solid var(--line);border-radius:13px;
   color:var(--text);-webkit-text-fill-color:var(--text);font-family:"Bricolage Grotesque",sans-serif}
 .codebox input:focus{border-color:var(--mag);outline:none}
+/* A single field rather than a row of one-character boxes. Six boxes assume
+   the code is six long — it isn't always — and they fight with pasting,
+   which is how most people enter a code they've just been emailed. */
+.codein{width:100%;text-align:center;font-size:30px;font-weight:700;letter-spacing:10px;
+  padding:16px 10px;border-radius:14px;border:1.5px solid var(--line);background:var(--surface2);
+  color:var(--text);-webkit-text-fill-color:var(--text);caret-color:var(--mag);
+  font-family:"JetBrains Mono",ui-monospace,monospace;margin:4px 0 14px}
+.codein:focus{border-color:var(--mag);outline:none}
+.codein::placeholder{color:var(--dim);letter-spacing:6px}
+/* Onboarding errors stay on screen. A toast that fades after three seconds
+   is fine for "message sent"; it is the wrong place for the reason someone
+   cannot get into the app. */
+.oberr{display:none;margin:0 0 12px;padding:12px 14px;border-radius:12px;
+  background:rgba(229,40,92,.12);border:1px solid var(--mag);color:var(--text);
+  font-size:14px;line-height:1.5}
+.oberr.on{display:block}
+.oberr b{display:block;margin-bottom:3px}
+.oberr code{display:block;margin-top:7px;font-family:"JetBrains Mono",monospace;
+  font-size:11px;opacity:.75;word-break:break-word;white-space:pre-wrap}
 .pickgrid{display:flex;flex-wrap:wrap;gap:8px}
 .pick{padding:9px 15px;border-radius:999px;background:var(--surface);border:1px solid var(--line);
   font-size:14px;font-weight:600;color:var(--dim)}
@@ -4660,6 +4679,23 @@ const DB = {
   stopThread(ch){ if(ch)JammyAPI.chat.unsubscribe(ch); }
 };
 
+/* Show an onboarding failure where it can actually be read, and keep the
+   raw server text underneath — that line is what makes a problem reportable
+   instead of "it got stuck". */
+function obError(e){
+  const foot=$("#ob-foot");
+  if(!foot)return;
+  let box=foot.querySelector(".oberr");
+  if(!box){box=document.createElement("div");box.className="oberr";foot.insertBefore(box,foot.firstChild)}
+  const raw=(e&&(e.message||e.error_description||e.details))||"";
+  box.innerHTML=`<b>${esc(authMessage(e))}</b>`+(raw?`<code>${esc(String(raw))}</code>`:"");
+  box.classList.add("on");
+}
+function obClearError(){
+  const b=document.querySelector(".oberr");
+  if(b)b.classList.remove("on");
+}
+
 /* Turn a server error into something a musician can act on.
    "AuthApiError: Token has expired or is invalid" helps nobody. */
 function authMessage(e){
@@ -4802,7 +4838,8 @@ function renderStep(){
         <p class="sub" style="margin-bottom:10px">${LIVE
           ?"Enter the six-digit code we just sent. It expires in an hour."
           :"Enter the code we just sent. In this demo any six digits work."}</p>
-        <div class="codebox">${[0,1,2,3,4,5].map(i=>`<input inputmode="numeric" maxlength="1" data-ci="${i}">`).join("")}</div>
+        <input id="ob-code" class="codein" inputmode="numeric" autocomplete="one-time-code"
+               maxlength="10" placeholder="------" aria-label="Verification code">
       </div>`;
     foot.innerHTML=`<button class="btn" id="ob-next" disabled>Send code</button>`;
     const contact=$("#ob-contact"),next=$("#ob-next");
@@ -4814,25 +4851,26 @@ function renderStep(){
           next.disabled=true;next.textContent="Sending…";
           const r=await DB.signInSend(obDraft.method,to);
           next.textContent="Send code";next.disabled=false;
-          if(r.error){toast(authMessage(r.error));return}
+          if(r.error){obError(r.error);return}
+          obClearError();
         }
         obDraft.contact=to;
         $("#ob-codewrap").style.display="block";contact.disabled=true;
         next.textContent="Verify";next.disabled=true;
-        body.querySelector("[data-ci='0']").focus();
+        $("#ob-code").focus();
         toast("Code sent to "+obDraft.contact);
       }else{
         if(LIVE){
-          const code=[...body.querySelectorAll("[data-ci]")].map(x=>x.value).join("");
+          const code=($("#ob-code").value||"").replace(/\D/g,"");
           next.disabled=true;next.textContent="Checking…";
           const r=await DB.signInVerify(obDraft.method,obDraft.contact,code);
           next.textContent="Verify";next.disabled=false;
           if(r.error){
-            toast(authMessage(r.error));
-            body.querySelectorAll("[data-ci]").forEach(x=>x.value="");
-            body.querySelector("[data-ci='0']").focus();
+            obError(r.error);
+            $("#ob-code").value="";$("#ob-code").focus();
             return;
           }
+          obClearError();
           /* Signed in. If a profile already exists, this is a returning
              user and the rest of onboarding is just in their way. */
           const me=await DB.loadMe();
@@ -4842,13 +4880,21 @@ function renderStep(){
         obGo(3);toast("Verified");
       }
     };
-    body.querySelectorAll("[data-ci]").forEach((inp,i,all)=>{
-      inp.oninput=()=>{
-        if(inp.value&&all[i+1])all[i+1].focus();
-        next.disabled=[...all].some(x=>!x.value);
+    const codeEl=$("#ob-code");
+    if(codeEl){
+      /* Accept whatever length the server is configured to send. Supabase can
+         be set anywhere from four digits to ten, and hard-coding six means a
+         working code that physically won't fit in the box. */
+      const clean=()=>{
+        const digits=(codeEl.value||"").replace(/\D/g,"").slice(0,10);
+        if(codeEl.value!==digits)codeEl.value=digits;
+        next.disabled=digits.length<4;
       };
-      inp.onkeydown=e=>{if(e.key==="Backspace"&&!inp.value&&all[i-1])all[i-1].focus()};
-    });
+      codeEl.oninput=clean;
+      codeEl.onpaste=()=>setTimeout(clean,0);
+      codeEl.onkeydown=e=>{if(e.key==="Enter"&&!next.disabled)next.click()};
+      clean();
+    }
   }
 
   else if(st.id==="age"){
@@ -4978,7 +5024,8 @@ async function finishOnboarding(){
     if(obDraft.handle.length<3)obDraft.handle="user"+Math.floor(Math.random()*9000+1000);
     const r=await DB.createProfile(obDraft);
     if(btn){btn.disabled=false;btn.textContent="Agree and continue"}
-    if(r.error){toast(authMessage(r.error));return}
+    if(r.error){obError(r.error);return}
+    obClearError();
     if(r.data)adoptProfile(r.data);
   }
   S.account={method:obDraft.method,contact:obDraft.contact||null,dob:obDraft.dob,

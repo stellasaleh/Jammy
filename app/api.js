@@ -32,6 +32,53 @@
     auth: { persistSession: true, autoRefreshToken: true },
   });
 
+  /* ------------------------------------------------------------------
+     WHO AM I
+
+     Every write used to begin with auth.getUser(), which is a network
+     round trip to the auth server AND takes an internal lock on the
+     session. Called from inside another auth-related operation it can
+     wait on a lock that is never released, and then it waits forever —
+     no error, no timeout, just a button that says "Creating your
+     profile…" until the page is closed.
+
+     getSession() reads what is already on the device. No network, no
+     lock, no deadlock. We cache it and let the auth listener keep it
+     current.
+     ------------------------------------------------------------------ */
+  let CURRENT_UID = null;
+  async function uid() {
+    if (CURRENT_UID) return CURRENT_UID;
+    try {
+      const { data } = await sb.auth.getSession();
+      CURRENT_UID = data && data.session && data.session.user ? data.session.user.id : null;
+    } catch (e) {
+      CURRENT_UID = null;
+    }
+    return CURRENT_UID;
+  }
+  sb.auth.onAuthStateChange((_e, session) => {
+    CURRENT_UID = session && session.user ? session.user.id : null;
+  });
+
+  /* ------------------------------------------------------------------
+     NOTHING WAITS FOREVER
+
+     A request that never answers is worse than one that fails: the app
+     has no way to tell the person anything. Every call gets a ceiling.
+     ------------------------------------------------------------------ */
+  const CALL_TIMEOUT_MS = cfg.timeoutMs || 20000;
+  function withTimeout(promise, ms) {
+    let t;
+    const limit = new Promise((_, reject) => {
+      t = setTimeout(
+        () => reject(new Error("The server didn't answer in time. Check your connection and try again.")),
+        ms
+      );
+    });
+    return Promise.race([promise, limit]).finally(() => clearTimeout(t));
+  }
+
   /* every call returns {data, error} — never throws, so one failed
      request can't blank the app the way an exception would */
   const ok = (data) => ({ data, error: null });
@@ -41,7 +88,10 @@
   };
   async function call(fn) {
     try {
-      const { data, error } = await fn();
+      const { data, error } = await withTimeout(
+        Promise.resolve().then(fn),
+        CALL_TIMEOUT_MS
+      );
       return error ? fail(error) : ok(data);
     } catch (e) {
       return fail(e);
@@ -74,11 +124,11 @@
   const profile = {
     /* call this once, right after the age gate and terms screen */
     async create(fields) {
-      const { data: u } = await sb.auth.getUser();
-      if (!u || !u.user) return fail(new Error("not signed in"));
+      const me = await uid();
+      if (!me) return fail(new Error("not signed in"));
       return call(() =>
         sb.from("profiles").insert({
-          id: u.user.id,
+          id: me,
           handle: fields.handle.replace(/^@/, "").toLowerCase(),
           display_name: fields.name,
           city: fields.city,
@@ -96,16 +146,16 @@
 
     mine: () =>
       call(async () => {
-        const { data: u } = await sb.auth.getUser();
-        return sb.from("profiles").select("*").eq("id", u.user.id).single();
+        const me = await uid();
+        return sb.from("profiles").select("*").eq("id", me).single();
       }),
 
     get: (id) => call(() => sb.from("profiles").select("*").eq("id", id).single()),
 
     update: (patch) =>
       call(async () => {
-        const { data: u } = await sb.auth.getUser();
-        return sb.from("profiles").update(patch).eq("id", u.user.id).select().single();
+        const me = await uid();
+        return sb.from("profiles").update(patch).eq("id", me).select().single();
       }),
 
     /* Snap the location to ~1km before it ever leaves the device.
@@ -114,11 +164,11 @@
     async setLocation(lat, lng, label) {
       const r = (n) => Math.round(n * 100) / 100; // ~1.1km
       return call(async () => {
-        const { data: u } = await sb.auth.getUser();
+        const me = await uid();
         return sb.from("profiles").update({
           city: label || null,
           location: `SRID=4326;POINT(${r(lng)} ${r(lat)})`,
-        }).eq("id", u.user.id);
+        }).eq("id", me);
       });
     },
   };
@@ -187,10 +237,10 @@
 
     send: (conversationId, body) =>
       call(async () => {
-        const { data: u } = await sb.auth.getUser();
+        const me = await uid();
         return sb.from("messages").insert({
           conversation_id: conversationId,
-          sender_id: u.user.id,
+          sender_id: me,
           body,
         }).select().single();
       }),
@@ -211,11 +261,11 @@
 
     markRead: (conversationId) =>
       call(async () => {
-        const { data: u } = await sb.auth.getUser();
+        const me = await uid();
         return sb.from("conversation_members")
           .update({ last_read_at: new Date().toISOString() })
           .eq("conversation_id", conversationId)
-          .eq("user_id", u.user.id);
+          .eq("user_id", me);
       }),
   };
 
@@ -224,8 +274,8 @@
     /* peaks are computed on the client at record time and stored on the row —
        decoding audio just to draw a waveform in a list is slow and drains battery */
     async send(conversationId, blob, { durationMs, peaks, label }) {
-      const { data: u } = await sb.auth.getUser();
-      if (!u || !u.user) return fail(new Error("not signed in"));
+      const me = await uid();
+      if (!me) return fail(new Error("not signed in"));
       const ext = (blob.type || "").includes("mp4") ? "m4a" : "webm";
       const id = crypto.randomUUID();
       const path = `clips/${conversationId}/${id}.${ext}`;
@@ -241,7 +291,7 @@
       return call(() =>
         sb.from("messages").insert({
           conversation_id: conversationId,
-          sender_id: u.user.id,
+          sender_id: me,
           clip_path: path,
           clip_mime: blob.type || "audio/webm",
           clip_duration_ms: Math.round(durationMs || 0),
@@ -268,19 +318,19 @@
 
     create: (fields) =>
       call(async () => {
-        const { data: u } = await sb.auth.getUser();
+        const me = await uid();
         const { data: band, error } = await sb.from("bands").insert({
           name: fields.name,
           kind: fields.kind || "jammy",
           city: fields.city,
           genres: fields.genres || [],
           about: fields.about,
-          created_by: u.user.id,
+          created_by: me,
         }).select().single();
         if (error) return { data: null, error };
         await sb.from("band_members").insert({
           band_id: band.id,
-          user_id: u.user.id,
+          user_id: me,
           instruments: fields.myInstruments || [],
           role_label: fields.myRole,
           is_admin: true,
@@ -308,7 +358,7 @@
 
     addEvent: (bandId, ev) =>
       call(async () => {
-        const { data: u } = await sb.auth.getUser();
+        const me = await uid();
         const { data: row, error } = await sb.from("band_events").insert({
           band_id: bandId,
           kind: ev.kind,
@@ -317,12 +367,12 @@
           address: ev.address || null,
           note: ev.note || null,
           private_function: !!ev.privateFunction,
-          created_by: u.user.id,
+          created_by: me,
         }).select().single();
         if (error) return { data: null, error };
         if (ev.myTask) {
           await sb.from("event_tasks").insert({
-            event_id: row.id, user_id: u.user.id, task: ev.myTask,
+            event_id: row.id, user_id: me, task: ev.myTask,
           });
         }
         return { data: row, error: null };
@@ -346,17 +396,17 @@
       call(() => sb.rpc("feed_page", { before: before, page_size: pageSize })),
     post: (body, tag, trackId) =>
       call(async () => {
-        const { data: u } = await sb.auth.getUser();
+        const me = await uid();
         return sb.from("posts").insert({
-          author_id: u.user.id, body, tag: tag || null, track_id: trackId || null,
+          author_id: me, body, tag: tag || null, track_id: trackId || null,
         }).select().single();
       }),
     like: (postId, on) =>
       call(async () => {
-        const { data: u } = await sb.auth.getUser();
+        const me = await uid();
         return on
-          ? sb.from("post_likes").upsert({ post_id: postId, user_id: u.user.id })
-          : sb.from("post_likes").delete().eq("post_id", postId).eq("user_id", u.user.id);
+          ? sb.from("post_likes").upsert({ post_id: postId, user_id: me })
+          : sb.from("post_likes").delete().eq("post_id", postId).eq("user_id", me);
       }),
     /* comments, paged by cursor like everything else */
     comments: (postId, before = null, pageSize = 30) =>
@@ -366,9 +416,9 @@
 
     comment: (postId, body) =>
       call(async () => {
-        const { data: u } = await sb.auth.getUser();
+        const me = await uid();
         return sb.from("post_comments").insert({
-          post_id: postId, author_id: u.user.id, body,
+          post_id: postId, author_id: me, body,
         }).select("id, body, created_at, author_id").single();
       }),
 
@@ -408,10 +458,10 @@
       seconds < 30
         ? Promise.resolve(ok(null))
         : call(async () => {
-            const { data: u } = await sb.auth.getUser();
+            const me = await uid();
             return sb.from("plays").insert({
               track_id: trackId,
-              user_id: u && u.user ? u.user.id : null,
+              user_id: me || null,
               seconds: Math.round(seconds),
               source: source || "radio",
             });
@@ -422,21 +472,21 @@
   const safety = {
     block: (id) =>
       call(async () => {
-        const { data: u } = await sb.auth.getUser();
-        return sb.from("blocks").upsert({ blocker_id: u.user.id, blocked_id: id });
+        const me = await uid();
+        return sb.from("blocks").upsert({ blocker_id: me, blocked_id: id });
       }),
     unblock: (id) =>
       call(async () => {
-        const { data: u } = await sb.auth.getUser();
-        return sb.from("blocks").delete().eq("blocker_id", u.user.id).eq("blocked_id", id);
+        const me = await uid();
+        return sb.from("blocks").delete().eq("blocker_id", me).eq("blocked_id", id);
       }),
     blocked: () =>
       call(() => sb.from("blocks").select("blocked_id, created_at, profiles!blocks_blocked_id_fkey(display_name, handle)")),
     report: ({ userId, postId, messageId, reason, note }) =>
       call(async () => {
-        const { data: u } = await sb.auth.getUser();
+        const me = await uid();
         return sb.from("reports").insert({
-          reporter_id: u.user.id,
+          reporter_id: me,
           target_user: userId || null,
           target_post: postId || null,
           target_message: messageId || null,
@@ -445,9 +495,9 @@
       }),
     registerDevice: (token, platform) =>
       call(async () => {
-        const { data: u } = await sb.auth.getUser();
+        const me = await uid();
         return sb.from("device_tokens").upsert({
-          user_id: u.user.id, token, platform,
+          user_id: me, token, platform,
           updated_at: new Date().toISOString(),
         });
       }),
