@@ -203,6 +203,12 @@
 
     /* everyone you've matched with, with enough to draw the row */
     connections: () => call(() => sb.rpc("my_connections")),
+
+    /* People who have asked to play with you and are still waiting.
+       Needs the server because you can only see your own swipes — which
+       is precisely why nobody could tell they had been asked. */
+    requests: () => call(() => sb.rpc("incoming_requests")),
+    requestCount: () => call(() => sb.rpc("incoming_request_count")),
   };
 
   /* ---------------- CHAT ---------------- */
