@@ -387,6 +387,11 @@
           p_note: note || null,
         })),
 
+    /* Taking somebody off the roster. Admin only, and it refuses to
+       strand a band without an admin or to empty it. */
+    removeMember: (bandId, userId) =>
+      call(() => sb.rpc("remove_band_member", { b: bandId, who: userId })),
+
     /* everyone waiting on an answer from a band you run */
     requests: (bandId) => call(() => sb.rpc("band_requests", { b: bandId || null })),
     requestCount: () => call(() => sb.rpc("band_request_count")),

@@ -73,6 +73,7 @@ function makeAPI(opts = {}) {
       gigsNearMe: async (m, d) => { log.push("gigsNearMe:" + m); return { data: opts.gigs || [], error: null }; },
       page: async (b) => { log.push("bandPage:" + b); return { data: opts.bandPage ? [opts.bandPage] : [], error: null }; },
       askToJoin: async (b) => { log.push("askToJoin:" + b); return opts.askFails ? err(opts.askFails) : { data: "sent", error: null }; },
+      removeMember: async (b, u) => { log.push("removeMember:" + b + ":" + u); return opts.removeFails ? err(opts.removeFails) : { data: true, error: null }; },
       requests: async (b) => { log.push("bandRequests:" + (b || "all")); return { data: opts.bandRequests || [], error: null }; },
       requestCount: async () => ({ data: (opts.bandRequests || []).length, error: null }),
       answerRequest: async (r, y) => { log.push("answerBandRequest:" + r + ":" + y); return opts.answerBandFails ? err(opts.answerBandFails) : { data: true, error: null }; },
@@ -603,8 +604,15 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     w.__peek('openBand("band1")'); await wait(140);
     ok(api._log.includes("roster:band1"), "asks for the roster");
     ok(api._log.includes("schedule:band1"), "and the diary");
-    ok(w.__peek("ALLBANDS()[0].members.length") === 2, "both members are there");
-    ok(w.__peek("ALLBANDS()[0].members[1].role") === "Bass", "with what each plays");
+    /* The roster the server sends includes YOU (u1 here). The band page
+       draws you separately at the top, so your own row has to come out
+       or you are on the screen twice and counted twice. */
+    ok(w.__peek("ALLBANDS()[0].members.length") === 1, "the other member is there");
+    ok(w.__peek("ALLBANDS()[0].members[0].role") === "Bass", "with what they play");
+    ok(w.__peek('ALLBANDS()[0].members.some(m=>m.id==="u1")') === false,
+       "and you are not listed among them, because you are drawn above");
+    ok(w.__peek("ALLBANDS()[0].myRole") === "Horns",
+       "but your own part in the band is kept from that row");
     ok(w.__peek("bandEvents(ALLBANDS()[0]).length") === 2, "both dates are there");
     ok(w.__peek("nextEvent(ALLBANDS()[0]).type") === "practice", "and the next one is the practice");
   }

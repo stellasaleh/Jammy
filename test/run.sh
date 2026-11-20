@@ -26,7 +26,7 @@ AS_USER="PGPASSWORD=app psql -q -h 127.0.0.1 -U app_user -d jammy -v ON_ERROR_ST
 
 MIGRATIONS="01_schema 02_security_and_functions 03_scale 04_likes_comments \
 05_ads 06_lockdown 07_storage 08_chat 09_swipe 10_grants 11_discover_fallback \
-12_matching_fix 13_match_repair 14_blocking_fix 15_requests 16_bands 17_gigs"
+12_matching_fix 13_match_repair 14_blocking_fix 15_requests 16_bands 17_gigs 18_roster"
 
 echo "building the database"
 bash "$HERE/../replica.sh" >/dev/null 2>&1 || /home/claude/replica.sh >/dev/null 2>&1
@@ -48,7 +48,7 @@ echo
 
 TOTAL_PASS=0; TOTAL_FAIL=0; BROKEN=""
 
-for t in journey match-and-message permissions requests bands gigs; do
+for t in journey match-and-message permissions requests bands gigs roster; do
   [ -f "$HERE/test/$t.test.sql" ] || continue
   su postgres -c "psql -q -d jammy -f $HERE/test/reset.sql" >/dev/null 2>&1
   # the older tests expect a fixed cast; journey and gigs make their own

@@ -29,8 +29,12 @@ const rows = {
   bands: [{id:"band1",name:"The Flaming Weirdos",city:"Boston",genres:["Jazz"],
            about:"",avatar_path:null,my_role:"Horns",i_am_admin:true,member_count:1,
            next_kind:null,next_at:null,next_place:null}],
+  /* band_roster() includes YOU. The band page draws you separately at the
+     top, so the app has to drop your own row or you appear twice. */
   roster: [{user_id:"u1",display_name:"Stella Saleh",handle:"stella",photo_path:null,
-            instruments:["Trumpet"],role_label:"Horns",is_admin:true,on_jammy:true}],
+            instruments:["Trumpet"],role_label:"Horns",is_admin:true,on_jammy:true},
+           {user_id:"u7",display_name:"Hasan Reza",handle:"hasan",photo_path:null,
+            instruments:["Bass"],role_label:"Bass",is_admin:false,on_jammy:true}],
   /* What band_schedule() hands a NON-MEMBER: the public gig, with no
      address and no note, and no sign of the practice at all. The real
      function decides this; the fake must not be more generous than it. */
@@ -55,6 +59,7 @@ const rows = {
 };
 window.__calls = [];
 const okr = (d) => Promise.resolve({ data: d, error: null });
+  window.__rows = rows;
 window.JammyAPI = {
   sb: { rpc: (n,a) => { window.__calls.push("rpc:"+n); return okr([]); },
         functions: { invoke: () => okr(null) } },
@@ -85,8 +90,15 @@ window.JammyAPI = {
                               my_role:f.myRole||"Member",i_am_admin:true,member_count:1,
                               next_kind:null,next_at:null,next_place:null});
                             return okr("band2"); },
-           join: () => { window.__calls.push("bands.join"); return okr(true); },
-           leave: () => { window.__calls.push("bands.leave"); return okr(true); },
+           /* join_band returns FALSE since joining became asking. A fake
+              that returns true tests a world that no longer exists. */
+           join: (b) => { window.__calls.push("bands.join:"+b); return okr(false); },
+           leave: (b) => { window.__calls.push("bands.leave:"+b);
+                           rows.bands = rows.bands.filter(x => x.id !== b);
+                           return okr(true); },
+           removeMember: (b,u) => { window.__calls.push("bands.removeMember:"+b+":"+u);
+                                    rows.roster = rows.roster.filter(x => x.user_id !== u);
+                                    return okr(true); },
            addEvent: (b,e) => { window.__calls.push("bands.addEvent:"+e.kind); return okr("ev1"); },
            cancelEvent: () => okr(true), schedule_mine: () => okr([]),
            gigsNearMe: (m,d) => { window.__calls.push("bands.gigsNearMe:"+m); return okr(rows.gigs); },
@@ -224,6 +236,86 @@ const PRIME = `try { localStorage.setItem("jammy:v1", JSON.stringify({ onboarded
     await page.waitForTimeout(500);
     ok((await calls()).some((x) => x.startsWith("swipe:")), "and it records a swipe");
   }
+
+  console.log("\n-- your own band: the roster, removing somebody, and leaving --");
+  await page.evaluate(() => { document.querySelector("#bandview").classList.remove("on"); openBand("band1"); });
+  await page.waitForTimeout(700);
+  {
+    const body = await page.textContent("#bv-body");
+    /* band_roster() includes you. Left in, you appeared twice and were
+       counted twice. */
+    const yous = (body.match(/Stella Saleh/g) || []).length;
+    ok(yous <= 1, `you appear once on your own band page, not twice (found ${yous})`);
+    ok(/Hasan Reza/.test(body), "and the other member is listed");
+    ok(/2 people/.test(body), "and the count is right");
+  }
+
+  clear();
+  const rmSel = await page.evaluate(() => {
+    const b = document.querySelector("[data-remove]");
+    if (!b) return null;
+    b.id = b.id || "__rm"; return "#" + b.id;
+  });
+  ok(!!rmSel, "whoever runs the band is offered a way to remove somebody");
+  if (rmSel && await clickIt(rmSel, "Remove can be pressed")) {
+    pass++; console.log("  ✓ Remove can be pressed");
+    await page.waitForTimeout(300);
+    /* It must ask first, and it must ask INSIDE the page: the artifact
+       viewer and some phone browsers never show confirm(), and a
+       confirmation that silently returns false is a button that does
+       nothing at all. */
+    ok(/Take Hasan Reza out of/i.test(await page.textContent("#bv-body")),
+       "and it asks first, in the page rather than in a dialog");
+    ok((await calls()).every((c) => !c.startsWith("bands.removeMember")),
+       "and has not removed anybody yet");
+
+    const yesSel = await page.evaluate(() => {
+      const b = document.querySelector("[data-remove-yes]");
+      if (!b) return null;
+      b.id = b.id || "__rmyes"; return "#" + b.id;
+    });
+    if (yesSel && await clickIt(yesSel, "confirming the removal can be pressed")) {
+      pass++; console.log("  ✓ confirming the removal can be pressed");
+      await page.waitForTimeout(700);
+      ok((await calls()).some((c) => c === "bands.removeMember:band1:u7"),
+         "and it reaches the server");
+      ok(!/Hasan Reza/.test(await page.textContent("#bv-body")),
+         "and they are off the band page");
+    }
+  }
+
+  console.log("\n-- leaving a band has to reach the server --");
+  /* THE BUG: this button edited what the phone believed and never told
+     the database. You stayed on the roster, stayed in the band chat, and
+     could still read the rehearsal address. */
+  clear();
+  const lvSel = await page.evaluate(() => {
+    const b = [...document.querySelectorAll("#bv-body button")]
+      .find((x) => /leave this band/i.test(x.textContent || ""));
+    if (!b) return null;
+    b.id = b.id || "__leave"; return "#" + b.id;
+  });
+  ok(!!lvSel, "a member is offered a way to leave");
+  if (lvSel && await clickIt(lvSel, "Leave can be pressed")) {
+    pass++; console.log("  ✓ Leave can be pressed");
+    await page.waitForTimeout(700);
+    ok((await calls()).some((c) => c === "bands.leave:band1"),
+       "and leaving actually tells the server");
+    ok((await page.evaluate(() => S.joined.includes("band1"))) === false,
+       "and the band is off your list");
+  }
+
+  /* Put the band back before the wider walk. Leaving really removes it
+     now, and the screens further down are about being IN a band — without
+     this they fail for the right reason at the wrong moment. */
+  await page.evaluate(() => {
+    window.__rows.bands.push({id:"band1",name:"The Flaming Weirdos",city:"Boston",
+      genres:["Jazz"],about:"",avatar_path:null,my_role:"Horns",i_am_admin:true,
+      member_count:1,next_kind:null,next_at:null,next_place:null});
+  });
+  await page.evaluate(() => loadBands());
+  await page.waitForTimeout(400);
+  ok(await page.evaluate(() => S.joined.includes("band1")), "and rejoining puts it back");
 
   console.log("\n-- a band that cannot be fetched gives up, rather than freezing --");
   /* THE BUG THIS CATCHES: openBand() re-opened on faith after fetching,

@@ -1533,7 +1533,19 @@ async function loadBandDetail(id){
   const [rr,sr]=await Promise.all([DB.bandRoster(id),DB.bandSchedule(id)]);
   if(!rr.error){
     const people=[];
-    b.members=(rr.data||[]).map(m=>{
+    const mine=S.me&&S.me.id;
+    /* The roster the server sends includes you. The band page draws you
+       separately at the top, so leaving yourself in here put you on the
+       screen twice and counted you twice. Your own row is still worth
+       reading — it is where your part in this band is recorded. */
+    b.members=(rr.data||[]).filter(m=>{
+      if(mine&&m.user_id===mine){
+        b.myRole=m.role_label||(m.instruments||[]).join(", ")||b.myRole||"Member";
+        b._admin=!!m.is_admin;
+        return false;
+      }
+      return true;
+    }).map(m=>{
       if(m.user_id)people.push(rowToArtist({
         id:m.user_id,display_name:m.display_name,handle:m.handle,
         photo_path:m.photo_path,instruments:m.instruments||[],genres:[]}));
@@ -1652,7 +1664,9 @@ function bandEvents(b){
   return (b.events||[]).concat(extra).sort((x,y)=>new Date(x.at)-new Date(y.at));
 }
 function nextEvent(b){const now=Date.now();return bandEvents(b).find(e=>new Date(e.at)>=now)||null}
-function bandMembers(b){return (b.members||[]).map(m=>m.id?{...m,p:A(m.id)}:{...m,p:null})}
+/* b can be missing: you left the band, or were removed, possibly on
+   another phone, while a screen about it was still open. */
+function bandMembers(b){return ((b&&b.members)||[]).map(m=>m.id?{...m,p:A(m.id)}:{...m,p:null})}
 /* In live mode the people on screen come from the database, not from the
    sixteen written-in demo musicians. LIVEPOOL holds whoever the server
    last sent; POOL() is what every screen should ask for. KNOWN keeps
@@ -4686,6 +4700,11 @@ function openBand(id){
     <div class="t"><b>${esc(S.me.name||"You")}</b><span>${esc(b.myRole||"")}</span></div>
     <span class="tagme">YOU</span>`;
   h.appendChild(me);
+  /* Whoever runs the band can take somebody out of it. Before this there
+     was no way to, which mattered because the old joining rule let people
+     add themselves — and a member can read the rehearsal address. */
+  const canRemove=LIVE&&b._admin&&b.kind==="jammy"&&mem.length>0;
+
   mem.forEach(m=>{
     const row=el("div","mrow2");
     if(m.p){
@@ -4699,6 +4718,18 @@ function openBand(id){
         <div class="t"><b>${esc(m.name)}</b><span>${esc(m.role)} · not on Jammy</span></div>`;
     }
     h.appendChild(row);
+
+    if(canRemove&&m.id){
+      const rm=el("div");
+      rm.style.cssText="padding:0 16px 11px;margin-top:-6px;border-bottom:1px solid var(--line)";
+      const rb=el("button","btn ghost","Remove from "+b.name);
+      rb.style.cssText="padding:8px 13px;font-size:13px";
+      rb.setAttribute("data-remove",m.id);
+      rb.onclick=ev=>{ev.preventDefault();ev.stopPropagation();
+        confirmRemoveMember(b,m.id,(m.p&&m.p.name)||m.name||"this person",rm)};
+      rm.appendChild(rb);
+      h.appendChild(rm);
+    }
   });
 
   if(member&&(b.space||((b.info||[]).length))){
@@ -4708,13 +4739,21 @@ function openBand(id){
   }
 
   const foot=el("div");foot.style.padding="16px";
-  if(!member){
+  /* A real band on Jammy is asked to join at the top of this page, which
+     waits for the server and reports what it actually said. This button
+     stayed behind from before that existed: it fired and announced
+     "Request sent" in the same breath, without waiting to find out, and
+     on a live band it put a second Ask to join on the same screen. It is
+     now only what it is still for — listing a band that isn't on Jammy
+     on your own profile. */
+  if(!member&&!(LIVE&&b.kind==="jammy")){
     const jb=el("button","btn",b.kind==="jammy"?"Ask to join "+b.name:"Add this band to my profile");
     jb.style.width="100%";
-    jb.onclick=()=>{
-      joinBand(b.id);
+    jb.onclick=async()=>{
+      jb.disabled=true;
+      await joinBand(b.id);
+      jb.disabled=false;
       $("#bandview").classList.remove("on");openBandList();
-      if(b.kind==="jammy")toast("Request sent to "+b.name);
     };
     foot.appendChild(jb);
   }
@@ -4724,9 +4763,18 @@ function openBand(id){
     foot.appendChild(cb);
   }
   if(member){
+    /* This used to edit S.joined and nothing else. In LIVE that meant
+       leaving a band changed what your own phone believed and never told
+       the server: you stayed on the roster, stayed in the band chat, and
+       could still read the rehearsal address. leaveBand() was sitting
+       right here doing it properly and nothing called it. */
     const lv=el("button","btn ghost","Leave this band");lv.style.cssText="width:100%;margin-top:9px";
-    lv.onclick=()=>{S.joined=S.joined.filter(x=>x!==b.id);save();
-      $("#bandview").classList.remove("on");openBandList();renderYou();toast("Left "+b.name)};
+    lv.onclick=async()=>{
+      lv.disabled=true;lv.textContent="Leaving…";
+      await leaveBand(b.id);
+      lv.disabled=false;lv.textContent="Leave this band";
+      openBandList();renderYou();
+    };
     foot.appendChild(lv);
   }
   h.appendChild(foot);
@@ -4744,6 +4792,15 @@ async function joinBand(id,silent){
   if(LIVE){
     const r=await DB.joinBandSrv(id,myInstruments(),S.me.role||null);
     if(r.error){toast(authMessage(r.error));return}
+    /* The server answers true only if you are actually in the band now.
+       Since joining became asking, false means a request was filed and
+       somebody has to say yes. This used to announce "You're in" either
+       way, which told people they had joined a band they had not. */
+    if(r.data===false){
+      const b2=Bnd(id);if(b2)b2._request="pending";
+      if(!silent)toast("Asked to join "+b.name+". They have to say yes.");
+      return;
+    }
     await loadBands();await loadBandDetail(id);loadConvos();
     if(!silent)toast("You're in "+b.name);
     return;
@@ -4753,6 +4810,36 @@ async function joinBand(id,silent){
   if(b.kind==="jammy"&&!S.threads[id])S.threads[id]=(b.seed||[]).map(m=>({f:m.f,t:m.t}));
   save();renderYou();renderChats();
   if(!silent)toast("You're in "+b.name+" — it's on your profile now");
+}
+
+/* Taking somebody out of a band is not undoable from the app, so it asks
+   first — in the row itself, because the artifact viewer and some phone
+   browsers never show a confirm() dialog, and a confirmation that silently
+   returns false is a Remove button that does nothing. */
+function confirmRemoveMember(b,userId,name,host){
+  host.innerHTML="";
+  const q=el("div","privnote",`Take ${esc(name)} out of ${esc(b.name)}? They lose the band chat and the practice address.`);
+  q.style.marginBottom="8px";
+  const row=el("div");row.style.cssText="display:flex;gap:8px";
+  const yes=el("button","btn","Remove");yes.style.cssText="padding:8px 13px;font-size:13px";
+  const no=el("button","btn ghost","Keep them");no.style.cssText="padding:8px 13px;font-size:13px";
+  yes.setAttribute("data-remove-yes",userId);
+  no.onclick=()=>{openBand(b.id)};
+  yes.onclick=async()=>{
+    yes.disabled=true;no.disabled=true;yes.textContent="Removing…";
+    const r=await DB.removeBandMember(b.id,userId);
+    if(r.error){
+      yes.disabled=false;no.disabled=false;yes.textContent="Remove";
+      toast(authMessage(r.error));return;
+    }
+    toast(name+" is no longer in "+b.name);
+    bandDetailLoaded[b.id]=false;
+    await loadBands();
+    await loadBandDetail(b.id);
+    openBand(b.id);
+  };
+  row.appendChild(yes);row.appendChild(no);
+  host.appendChild(q);host.appendChild(row);
 }
 
 async function leaveBand(id){
@@ -4995,6 +5082,14 @@ function openEventPrivacy(bandId,e){
 }
 function openAddEvent(bandId){
   const b=Bnd(bandId),sb=$("#sheetbody");
+  /* The band can be gone by the time this opens — you left it, or somebody
+     removed you, possibly on another phone. Without this the sheet threw
+     on b.name and the screen stayed blank with no way to tell why. */
+  if(!b){
+    $("#sheet").classList.remove("on");
+    toast("That band isn't on your list any more");
+    openBandList();return;
+  }
   sb.innerHTML=`<div class="grabber"></div>
     <h2 style="font-size:22px;margin-bottom:14px">Add to ${esc(b.name)}</h2>
     <div class="field"><label>What is it</label><select id="ne-type">
@@ -5382,6 +5477,7 @@ const DB = {
   gigsNearMe(miles,days){ return JammyAPI.bands.gigsNearMe(miles,days); },
   bandPage(id){ return JammyAPI.bands.page(id); },
   askToJoin(id,inst,role,note){ return JammyAPI.bands.askToJoin(id,inst,role,note); },
+  removeBandMember(id,userId){ return JammyAPI.bands.removeMember(id,userId); },
   bandRequests(id){ return JammyAPI.bands.requests(id); },
   bandRequestCount(){ return JammyAPI.bands.requestCount(); },
   answerBandRequest(req,yes){ return JammyAPI.bands.answerRequest(req,yes); },
