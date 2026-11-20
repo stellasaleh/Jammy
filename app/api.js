@@ -371,6 +371,28 @@
     gigsNearMe: (miles, days) =>
       call(() => sb.rpc("gigs_near_me", { radius_miles: miles ?? 25, days: days || 30 })),
 
+    /* The public half of a band, for anyone who is not in it: the
+       name, the city, how many play in it, the next public gig, and
+       where the person asking stands with it. */
+    page: (bandId) => call(() => sb.rpc("band_page", { b: bandId })),
+
+    /* Joining is asking. A member can read the rehearsal address,
+       which is usually somebody's home. */
+    askToJoin: (bandId, instruments, role, note) =>
+      call(() =>
+        sb.rpc("ask_to_join_band", {
+          b: bandId,
+          p_instruments: instruments || [],
+          p_role: role || null,
+          p_note: note || null,
+        })),
+
+    /* everyone waiting on an answer from a band you run */
+    requests: (bandId) => call(() => sb.rpc("band_requests", { b: bandId || null })),
+    requestCount: () => call(() => sb.rpc("band_request_count")),
+    answerRequest: (requestId, yes) =>
+      call(() => sb.rpc("answer_band_request", { req: requestId, yes: !!yes })),
+
     media: (bandId) =>
       call(() =>
         sb.from("band_media").select("*").eq("band_id", bandId)

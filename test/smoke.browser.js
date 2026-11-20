@@ -7,7 +7,9 @@
 const { chromium } = require("playwright");
 const http = require("http"), fs = require("fs"), path = require("path");
 
-const ROOT = "/home/claude/jammy/app";
+/* Run against the working copy by default, so this tests what was just
+   changed rather than what was last deployed. */
+const ROOT = process.env.ROOT || "/mnt/user-data/outputs/jammy/www";
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".png": "image/png",
                 ".webmanifest": "application/manifest+json" };
 
@@ -29,8 +31,27 @@ const rows = {
            next_kind:null,next_at:null,next_place:null}],
   roster: [{user_id:"u1",display_name:"Stella Saleh",handle:"stella",photo_path:null,
             instruments:["Trumpet"],role_label:"Horns",is_admin:true,on_jammy:true}],
-  schedule: [],
-  convos: [], requests: [], messages: []
+  /* What band_schedule() hands a NON-MEMBER: the public gig, with no
+     address and no note, and no sign of the practice at all. The real
+     function decides this; the fake must not be more generous than it. */
+  schedule: [{id:"e9",kind:"gig",
+              starts_at:new Date(Date.now()+6*864e5).toISOString(),
+              ends_at:null,place:"The Middle East",address:null,note:null,
+              visibility:"public",mine:false}],
+  convos: [], requests: [], messages: [],
+  gigs: [{event_id:"e9",band_id:"band9",band_name:"The Fog Signals",
+          band_genres:["Indie"],band_avatar:null,
+          starts_at:new Date(Date.now()+6*864e5).toISOString(),
+          place:"The Middle East",city:"Boston",miles:2.8,i_am_member:false}],
+  bandPage: [{id:"band9",name:"The Fog Signals",city:"Boston",genres:["Indie"],
+              about:"We practise Tuesdays",avatar_path:null,member_count:3,
+              next_gig:new Date(Date.now()+6*864e5).toISOString(),
+              i_am_member:false,i_am_admin:false,my_request:null}],
+  bandRequests: [{request_id:"q1",band_id:"band1",band_name:"The Flaming Weirdos",
+                  user_id:"u7",display_name:"Hasan",handle:"hasan",photo_path:null,
+                  instruments:["Bass"],role_label:"Bass",
+                  note:"saw you at the Middle East",
+                  asked_at:new Date().toISOString()}]
 };
 window.__calls = [];
 const okr = (d) => Promise.resolve({ data: d, error: null });
@@ -55,12 +76,27 @@ window.JammyAPI = {
           subscribe: () => ({}), unsubscribe: () => {}, markRead: () => okr({}) },
   bands: { mine: () => { window.__calls.push("bands.mine"); return okr(rows.bands); },
            roster: () => okr(rows.roster), schedule: () => okr(rows.schedule),
-           create: (f) => { window.__calls.push("bands.create:"+f.name); return okr("band2"); },
+           /* A real server answers my_bands() with the band it just made.
+              A fake that forgets to is a fake that tests a world which
+              does not exist — and it hid a freeze in openBand(). */
+           create: (f) => { window.__calls.push("bands.create:"+f.name);
+                            rows.bands.push({id:"band2",name:f.name,city:f.city||"",
+                              genres:f.genres||[],about:"",avatar_path:null,
+                              my_role:f.myRole||"Member",i_am_admin:true,member_count:1,
+                              next_kind:null,next_at:null,next_place:null});
+                            return okr("band2"); },
            join: () => { window.__calls.push("bands.join"); return okr(true); },
            leave: () => { window.__calls.push("bands.leave"); return okr(true); },
            addEvent: (b,e) => { window.__calls.push("bands.addEvent:"+e.kind); return okr("ev1"); },
            cancelEvent: () => okr(true), schedule_mine: () => okr([]),
-           gigsNearMe: () => okr([]), media: () => okr([]) },
+           gigsNearMe: (m,d) => { window.__calls.push("bands.gigsNearMe:"+m); return okr(rows.gigs); },
+           page: (b) => { window.__calls.push("bands.page:"+b); return okr(rows.bandPage); },
+           askToJoin: (b) => { window.__calls.push("bands.askToJoin:"+b); return okr("sent"); },
+           requests: (b) => { window.__calls.push("bands.requests"); return okr(rows.bandRequests); },
+           requestCount: () => okr(rows.bandRequests.length),
+           answerRequest: (r,y) => { window.__calls.push("bands.answerRequest:"+r+":"+y);
+                                     rows.bandRequests = []; return okr(true); },
+           media: () => okr([]) },
   feed: { posts: () => okr([]), comments: () => okr([]), comment: () => okr({}),
           deleteComment: () => okr({}), subscribeComments: () => ({}), unsubscribe: () => {},
           like: () => okr({}), likers: () => okr([]), post: () => okr({}) },
@@ -187,6 +223,88 @@ const PRIME = `try { localStorage.setItem("jammy:v1", JSON.stringify({ onboarded
     pass++; console.log("  ✓ the yes button can be pressed");
     await page.waitForTimeout(500);
     ok((await calls()).some((x) => x.startsWith("swipe:")), "and it records a swipe");
+  }
+
+  console.log("\n-- a band that cannot be fetched gives up, rather than freezing --");
+  /* THE BUG THIS CATCHES: openBand() re-opened on faith after fetching,
+     so a band the server never returns sent it round and round. The page
+     locked up, and every control after it failed for no visible reason. */
+  await page.evaluate(() => { document.querySelector("#bandview").classList.remove("on"); });
+  const froze = await page.evaluate(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const before = window.__calls.length;
+    openBand("band-that-does-not-exist");
+    await sleep(900);
+    const asks = window.__calls.slice(before).filter((c) => c.startsWith("bands.page")).length;
+    return { asks, text: (document.querySelector("#bv-body") || {}).textContent || "" };
+  });
+  ok(froze.asks <= 2, `it asks the server once or twice, not forever (asked ${froze.asks} times)`);
+  ok(/isn't here|out of date/i.test(froze.text), "and says plainly that the band is not there");
+  ok(await page.evaluate(() => { go("disc"); return true; }), "and the app still answers afterwards");
+
+  console.log("\n-- gigs near you --");
+  /* The screen that did not exist. Every click here is a REAL click, so
+     anything sitting on top of these controls fails the test rather than
+     passing it the way a scripted .click() would. */
+  await page.evaluate(() => go("disc")); await page.waitForTimeout(250);
+  clear();
+  if (await clickIt("#m-gigs", "the Gigs tab can be pressed")) {
+    pass++; console.log("  ✓ the Gigs tab can be pressed");
+    await page.waitForTimeout(500);
+    ok((await calls()).some((x) => x.startsWith("bands.gigsNearMe")), "and it asks the server for gigs");
+    ok(await visible("#gigs"), "the gig list is on screen");
+    const txt = await page.textContent("#gigs");
+    ok(/Fog Signals/.test(txt), "a band you are not in appears");
+    ok(/Middle East/.test(txt), "with the venue");
+    ok(!/practice/i.test(txt.replace(/Practices never do[^.]*\./i, "")), "and no practice anywhere on it");
+    ok(!(await visible("#deck")) || (await page.evaluate(() => getComputedStyle(document.querySelector("#deck")).display)) === "none",
+       "and the people deck is out of the way");
+  }
+
+  clear();
+  if (await clickIt("#gigs .evrow", "a gig row can be pressed")) {
+    pass++; console.log("  ✓ a gig row can be pressed");
+    await page.waitForTimeout(600);
+    ok((await calls()).some((x) => x === "bands.page:band9"), "and it fetches that band");
+    ok(await visible("#bandview"), "and opens the band page");
+    const body = await page.textContent("#bv-body");
+    ok(/Fog Signals/.test(body), "showing the band");
+    ok(/not in this band/i.test(body), "and saying you are not in it");
+    ok(/Middle East/.test(body), "and the gig is on their page too");
+    ok(!/Dane St|bring the/i.test(body), "with no address and no band note");
+  }
+
+  console.log("\n-- asking to join a band you are not in --");
+  clear();
+  const askSel = await page.evaluate(() => {
+    const b = [...document.querySelectorAll("#bv-body button")]
+      .find((x) => /ask to join/i.test(x.textContent || ""));
+    if (!b) return null;
+    b.id = b.id || "__ask";
+    return "#" + b.id;
+  });
+  ok(!!askSel, "a non-member is offered Ask to join");
+  if (askSel && await clickIt(askSel, "the Ask to join button can be pressed")) {
+    pass++; console.log("  ✓ the Ask to join button can be pressed");
+    await page.waitForTimeout(500);
+    ok((await calls()).some((x) => x === "bands.askToJoin:band9"), "and it reaches the server");
+    ok(/asked to join/i.test(await page.textContent("#bv-body")), "and the page says it is waiting on them");
+    ok((await page.evaluate(() => S.joined.includes("band9"))) === false,
+       "and asking did NOT put you in the band");
+  }
+
+  console.log("\n-- approving somebody who asked to join --");
+  await page.evaluate(() => { document.querySelector("#bandview").classList.remove("on"); go("chats"); });
+  await page.waitForTimeout(600);
+  const chats = await page.textContent("#chats");
+  ok(/Wants to join your band/i.test(chats), "the request shows up in Chats");
+  ok(/Hasan/.test(chats), "with who is asking");
+  clear();
+  if (await clickIt("[data-bq-yes]", "Approve can be pressed")) {
+    pass++; console.log("  ✓ Approve can be pressed");
+    await page.waitForTimeout(500);
+    ok((await calls()).some((x) => x === "bands.answerRequest:q1:true"), "and it reaches the server");
+    ok(!/Wants to join your band/i.test(await page.textContent("#chats")), "and the request clears");
   }
 
   console.log("\n-- anything that renders but does nothing --");

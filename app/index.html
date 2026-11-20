@@ -293,7 +293,10 @@ nav .nb{position:absolute;top:4px;right:calc(50% - 20px);background:var(--mag);c
 .yourjob svg{width:15px;height:15px;flex:none;margin-top:2px;fill:none;stroke:var(--mag);stroke-width:2}
 .yourjob b{font-size:10px;letter-spacing:.06em;color:var(--mag);display:block;margin-bottom:2px}
 .yourjob span{font-size:13px}
-.evrow{display:flex;gap:12px;align-items:flex-start;padding:11px 16px;border-bottom:1px solid var(--line)}
+/* text-align:left matters: an evrow is sometimes a <button>, and a button
+   centres its text by default, which reads as a layout bug. */
+.evrow{display:flex;gap:12px;align-items:flex-start;padding:11px 16px;border-bottom:1px solid var(--line);
+  width:100%;text-align:left;background:none;border-left:0;border-right:0;border-top:0;color:inherit;font:inherit}
 .evrow .when{width:56px;flex:none;text-align:center}
 .evrow .when b{display:block;font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:15px;line-height:1.1}
 .evrow .when span{font-size:10px;color:var(--dim);font-family:"JetBrains Mono",monospace}
@@ -881,13 +884,20 @@ nav .nb{position:absolute;top:4px;right:calc(50% - 20px);background:var(--mag);c
 
     <!-- DISCOVER -->
     <section class="view" id="v-disc">
-      <div class="fbar">
+      <div class="fbar" id="mode-bar">
+        <div class="vswitch" style="width:100%">
+          <button id="m-people" class="on">People</button>
+          <button id="m-gigs">Gigs near you</button>
+        </div>
+      </div>
+      <div class="fbar" id="people-bar">
         <button class="fchip" id="f-open"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 6h18M7 12h10M10 18h4"/></svg><span id="f-summary">Within 7 mi</span></button>
         <div class="vswitch">
           <button id="v-deck" class="on">Deck</button>
           <button id="v-radar">Rings</button>
         </div>
       </div>
+      <div class="scroll" id="gigs" style="display:none"></div>
       <div class="deck" id="deck"></div>
       <div class="radar" id="radar"></div>
       <div class="dacts">
@@ -1519,7 +1529,7 @@ async function loadBands(){
    when the page is actually opened. */
 async function loadBandDetail(id){
   if(!LIVE)return;
-  const b=LIVEBANDS.find(x=>x.id===id);if(!b)return;
+  const b=Bnd(id);if(!b)return;
   const [rr,sr]=await Promise.all([DB.bandRoster(id),DB.bandSchedule(id)]);
   if(!rr.error){
     const people=[];
@@ -1540,10 +1550,101 @@ async function loadBandDetail(id){
       mine:!!e.mine
     }));
   }
+  /* whoever runs the band also needs to see who is waiting */
+  if(b._admin){
+    const qr=await DB.bandRequests(id);
+    if(!qr.error){
+      b._requests=(qr.data||[]).map(q=>({
+        id:q.request_id, user_id:q.user_id,
+        name:q.display_name||q.handle||"Someone",
+        plays:q.role_label||(q.instruments||[]).join(", ")||"",
+        note:q.note||""
+      }));
+    }
+  }
   if(viewingBand===id)openBand(id);
 }
 
-function ALLBANDS(){return LIVE?LIVEBANDS:BANDS.concat(S.myBands||[])}
+/* Ask to join a band you are not in. */
+async function askToJoinBand(bandId,btn){
+  if(!LIVE)return;
+  if(btn){btn.disabled=true;btn.textContent="Asking…"}
+  const mine=(S.me&&S.me.instruments)||[];
+  const r=await DB.askToJoin(bandId,mine,mine[0]||null,null);
+  if(r.error){
+    if(btn){btn.disabled=false;btn.textContent="Ask to join"}
+    toast(authMessage(r.error));return;
+  }
+  const b=Bnd(bandId);
+  const said=r.data;
+  if(said==="member"){
+    if(!S.joined.includes(bandId)){S.joined.push(bandId);save()}
+    toast("You're in this band");
+    await loadBands();openBand(bandId);return;
+  }
+  if(b)b._request="pending";
+  toast("Asked. They'll see it on their band page.");
+  openBand(bandId);
+}
+
+/* Approve or decline somebody who asked to join. */
+async function answerBandRequest(bandId,reqId,yes,yesBtn,noBtn){
+  if(!LIVE)return;
+  if(yesBtn)yesBtn.disabled=true;
+  if(noBtn)noBtn.disabled=true;
+  const r=await DB.answerBandRequest(reqId,yes);
+  if(r.error){
+    if(yesBtn)yesBtn.disabled=false;
+    if(noBtn)noBtn.disabled=false;
+    toast(authMessage(r.error));return;
+  }
+  const b=Bnd(bandId);
+  if(b)b._requests=(b._requests||[]).filter(q=>q.id!==reqId);
+  toast(yes?"They're in the band":"Declined");
+  bandDetailLoaded[bandId]=false;
+  await loadBandDetail(bandId);
+  openBand(bandId);
+  loadBandRequests();
+}
+
+/* Bands you are not in, fetched because you opened one from a gig or
+   a search. Kept apart from LIVEBANDS so that "your bands" stays a
+   list of bands that are actually yours. */
+let OTHERBANDS=[];
+
+/* Bands we asked the server about and did not get back. Without this,
+   a band that cannot be fetched — deleted, or a server that answers with
+   the wrong row — sends openBand() round and round asking again, and the
+   page freezes solid while it does. Asked once, answered once. */
+const BAND_MISSING=new Set();
+
+/* Fetch the public half of a band so its page can be opened by
+   somebody who is not in it. Returns the band, or null. */
+async function ensureBand(id){
+  if(!LIVE)return Bnd(id)||null;
+  const have=Bnd(id);if(have)return have;
+  if(BAND_MISSING.has(id))return null;
+  const r=await DB.bandPage(id);
+  if(r.error||!r.data||!r.data.length){BAND_MISSING.add(id);return null}
+  const row=r.data[0];
+  /* and if what came back is not what we asked for, it is not an answer */
+  if(row.id!==id){BAND_MISSING.add(id);return null}
+  const b={
+    id:row.id, name:row.name, kind:"jammy", city:row.city||"",
+    genres:row.genres||[], about:row.about||"", formed:"",
+    myRole:null, avatar:row.avatar_path||null,
+    members:[], events:[],
+    _admin:!!row.i_am_admin, _count:row.member_count||0,
+    _next:row.next_gig?{type:"gig",at:row.next_gig,place:""}:null,
+    _request:row.my_request||null
+  };
+  OTHERBANDS=OTHERBANDS.filter(x=>x.id!==id).concat([b]);
+  if(row.i_am_member&&!S.joined.includes(id)){S.joined.push(id);save()}
+  await loadBandDetail(id);
+  return b;
+}
+
+function ALLBANDS(){return LIVE?LIVEBANDS.concat(OTHERBANDS.filter(o=>!LIVEBANDS.some(l=>l.id===o.id))):BANDS.concat(S.myBands||[])}
 function Bnd(id){return ALLBANDS().find(b=>b.id===id)}
 function myBandList(){return ALLBANDS().filter(b=>S.joined.includes(b.id))}
 function bandEvents(b){
@@ -2619,7 +2720,30 @@ function loadDeckSoon(){
   deckTimer=setTimeout(loadDeck,220);
 }
 
+/* Discover has two halves: people to play with, and gigs to go to.
+   Stella's own words for the second one — Jammy should also be where
+   somebody who just wants to hear live music finds a gig tonight. */
+function discoverMode(){return S.discMode==="gigs"?"gigs":"people"}
+
 function refreshDiscover(){
+  const gigMode=discoverMode()==="gigs";
+  const ctx=$("#ctx");
+  if(ctx&&document.querySelector("#v-disc.on"))
+    ctx.textContent=gigMode?"Live music near you":CTX.disc;
+  $("#m-people").classList.toggle("on",!gigMode);
+  $("#m-gigs").classList.toggle("on",gigMode);
+  $("#people-bar").style.display=gigMode?"none":"";
+  $("#gigs").style.display=gigMode?"":"none";
+
+  if(gigMode){
+    $("#deck").style.display="none";
+    $("#radar").classList.remove("on");
+    document.querySelector(".dacts").style.display="none";
+    renderGigs();
+    if(LIVE)loadGigs();
+    return;
+  }
+
   const sum=$("#f-summary");if(sum)sum.textContent=filterSummary();
   if(S.filters.view==="radar")renderRadar();else renderDeck();
   $("#deck").classList.toggle("on",S.filters.view==="deck");
@@ -2628,6 +2752,84 @@ function refreshDiscover(){
   $("#v-deck").classList.toggle("on",S.filters.view==="deck");
   $("#v-radar").classList.toggle("on",S.filters.view==="radar");
   document.querySelector(".dacts").style.display=S.filters.view==="deck"?"":"none";
+}
+$("#m-people").onclick=()=>{S.discMode="people";save();refreshDiscover()};
+$("#m-gigs").onclick  =()=>{S.discMode="gigs";  save();refreshDiscover()};
+
+/* ---------- gigs near you ---------- */
+let LIVEGIGS=null,gigsLoading=false;
+
+async function loadGigs(){
+  if(!LIVE||gigsLoading)return;
+  gigsLoading=true;
+  /* The same ring Discover uses, so "within 7 miles" means the same
+     thing on both halves of this screen. Zero means anywhere. */
+  const miles=(S.filters&&S.filters.radius!=null)?S.filters.radius:25;
+  const r=await DB.gigsNearMe(miles,60);
+  gigsLoading=false;
+  if(r.error){LIVEGIGS=[];renderGigs(r.error);return}
+  LIVEGIGS=(r.data||[]).map(g=>({
+    id:g.event_id, bandId:g.band_id, band:g.band_name,
+    genres:g.band_genres||[], at:g.starts_at,
+    place:g.place||"", city:g.city||"", miles:g.miles,
+    mine:!!g.i_am_member
+  }));
+  renderGigs();
+}
+
+function renderGigs(err){
+  const host=$("#gigs");if(!host)return;
+  host.innerHTML="";
+
+  if(!LIVE){
+    host.appendChild(el("div","empty",
+      `<h3>Gigs near you</h3><p>This fills up once you're signed in. A band posts a show and everyone nearby can find it — you don't have to be in the band, or know anyone in it.</p>`));
+    return;
+  }
+  if(err){
+    host.appendChild(el("div","empty",
+      `<h3>Couldn't load gigs</h3><p>${esc(authMessage(err))}</p>`));
+    return;
+  }
+  if(LIVEGIGS===null){
+    host.appendChild(el("div","empty",`<p style="font-size:13.5px">Looking for gigs…</p>`));
+    return;
+  }
+
+  const miles=(S.filters&&S.filters.radius!=null)?S.filters.radius:25;
+  if(!LIVEGIGS.length){
+    host.appendChild(el("div","empty",
+      `<h3>No gigs coming up</h3>
+       <p>Nothing booked ${miles>0?"within "+miles+" miles":"anywhere"} in the next two months. When a band near you posts a show, it lands here.</p>`));
+    const wider=el("button","btn ghost",miles>0?"Look anywhere":"Try again");
+    wider.style.cssText="width:calc(100% - 32px);margin:0 16px";
+    wider.onclick=()=>{
+      if(miles>0){S.filters.radius=0;save()}
+      LIVEGIGS=null;renderGigs();loadGigs();
+    };
+    host.appendChild(wider);
+    return;
+  }
+
+  host.appendChild(el("div","sechead",
+    `<h2>Coming up</h2><span class="more">${LIVEGIGS.length} ${LIVEGIGS.length===1?"gig":"gigs"}</span>`));
+
+  let lastDay="";
+  LIVEGIGS.forEach(g=>{
+    const d=new Date(g.at), day=dayPhrase(g.at);
+    if(day!==lastDay){lastDay=day;host.appendChild(el("div","bgroup",day.toUpperCase()))}
+    const row=el("button","evrow statbtn");
+    row.innerHTML=`<div class="when"><b>${DOW[d.getDay()].slice(0,3)} ${d.getDate()}</b><span>${clock(g.at)}</span></div>
+      <div class="what"><b>${esc(g.band)}</b>
+        <span>${esc(g.place||"Venue to be announced")}${g.city?" · "+esc(g.city):""}${g.miles!=null?" · "+distLabel(g.miles):""}</span>
+        ${g.genres.length?`<span style="opacity:.75">${esc(g.genres.join(" · "))}</span>`:""}</div>
+      <span class="evtype gig">${g.mine?"YOURS":"GIG"}</span>`;
+    row.onclick=()=>openBand(g.bandId);
+    host.appendChild(row);
+  });
+
+  host.appendChild(el("div","privnote",
+    `${GLOBE} Only public shows appear here. Practices never do — a practice is usually somebody's home.`));
 }
 
 /* ---------- deck ---------- */
@@ -2994,6 +3196,37 @@ async function loadRequests(){
   updateBadge();renderChats();
 }
 
+/* People waiting to join a band you run, across all your bands. */
+let BANDREQS=[];
+async function loadBandRequests(){
+  if(!LIVE)return;
+  const r=await DB.bandRequests(null);
+  if(r.error){BANDREQS=[];return}
+  BANDREQS=(r.data||[]).map(q=>({
+    id:q.request_id, bandId:q.band_id, band:q.band_name,
+    userId:q.user_id, name:q.display_name||q.handle||"Someone",
+    plays:q.role_label||(q.instruments||[]).join(", ")||"",
+    note:q.note||""
+  }));
+  updateBadge();renderChats();
+}
+
+async function answerBandJoin(q,yes){
+  BANDREQS=BANDREQS.filter(x=>x.id!==q.id);
+  renderChats();updateBadge();
+  const r=await DB.answerBandRequest(q.id,yes);
+  if(r.error){
+    toast(authMessage(r.error));
+    loadBandRequests();
+    return;
+  }
+  toast(yes?q.name+" is in "+q.band:"Declined");
+  if(yes){
+    bandDetailLoaded[q.bandId]=false;
+    loadBandDetail(q.bandId);
+  }
+}
+
 async function answerRequest(id,yes){
   const p=A(id);
   REQUESTS=REQUESTS.filter(x=>x.id!==id);
@@ -3129,6 +3362,31 @@ function renderChats(){
     });
   }
 
+  /* Somebody asking to join a band you run is the same kind of thing as
+     somebody asking to connect, so it belongs in the same place. */
+  if(LIVE&&BANDREQS.length){
+    c.appendChild(el("div","sechead",
+      `<h2>Wants to join your band</h2><span class="reqn">${BANDREQS.length}</span>`));
+    BANDREQS.forEach(q=>{
+      const row=el("div","reqrow");
+      row.innerHTML=`<div class="av" style="width:52px;height:52px">${art(hash(q.userId),initials(q.name),{size:52})}</div>
+        <div class="t"><b>${esc(q.name)}</b>
+          <span>${esc([q.plays,q.band].filter(Boolean).join(" · "))}</span>
+          ${q.note?`<span style="opacity:.75">“${esc(q.note)}”</span>`:""}</div>
+        <div class="ra">
+          <button class="rbtn pass" data-bq-no="${q.id}" aria-label="Decline ${esc(q.name)}">Decline</button>
+          <button class="rbtn yes" data-bq-yes="${q.id}" aria-label="Approve ${esc(q.name)}">Approve</button>
+        </div>`;
+      row.querySelector("[data-bq-yes]").onclick=ev=>{
+        ev.preventDefault();ev.stopPropagation();answerBandJoin(q,true);
+      };
+      row.querySelector("[data-bq-no]").onclick=ev=>{
+        ev.preventDefault();ev.stopPropagation();answerBandJoin(q,false);
+      };
+      c.appendChild(row);
+    });
+  }
+
   c.appendChild(el("div","sechead",`<h2>Bands</h2>`));
   /* Bands aren't wired to the database yet. Showing the four written-in
      demo bands to someone with a real account would be a lie, so in live
@@ -3136,7 +3394,7 @@ function renderChats(){
   if(LIVE){
     const liveBands=LIVECONVOS.filter(r=>r.kind==="band");
     if(!liveBands.length){
-      c.appendChild(el("div","empty",`<h3>No bands yet</h3><p>Band chats arrive with the bands feature. Direct messages work now.</p>`));
+      c.appendChild(el("div","empty",`<h3>No bands yet</h3><p>Start one from your profile, or ask to join one from a gig. Every band gets its own group chat, and it shows up here.</p>`));
     }else{
       liveBands.forEach(r=>{
         const th=S.threads[r.band_id]||[];
@@ -4247,7 +4505,22 @@ $("#bl-add").onclick=()=>openAddBand();
 
 let viewingBand=null,bandDetailLoaded={};
 function openBand(id){
-  const b=Bnd(id);if(!b)return;
+  let b=Bnd(id);
+  if(!b){
+    // a band you are not in — fetch its public half, then open it
+    if(!LIVE)return;
+    $("#bandview").classList.add("on");
+    $("#bv-name").textContent="Loading…";$("#bv-sub").textContent="";
+    $("#bv-body").innerHTML=`<div class="empty"><p style="font-size:13.5px">Opening this band…</p></div>`;
+    ensureBand(id).then(got=>{
+      /* Only re-open when the band is genuinely there now. Calling
+         openBand() on faith is what made this loop. */
+      if(got&&Bnd(id))openBand(id);
+      else{$("#bv-name").textContent="Not found";$("#bv-sub").textContent="";
+        $("#bv-body").innerHTML=`<div class="empty"><h3>That band isn't here</h3><p>It may have been removed, or the link is out of date.</p></div>`}
+    });
+    return;
+  }
   const first=viewingBand!==id;
   viewingBand=id;
   if(LIVE&&first&&!bandDetailLoaded[id]){bandDetailLoaded[id]=true;loadBandDetail(id)}
@@ -4261,8 +4534,46 @@ function openBand(id){
     `<h2>${esc(b.name)}</h2>
      <div class="meta">${b.genres.join(" · ")} · ${esc(b.city||"")}${b.formed?" · since "+esc(b.formed):""}</div>
      <div class="meta" style="margin-top:6px">${esc(b.about||"")}</div>
-     <div class="role">You play ${esc(b.myRole||"in this band")}</div>`);
+     ${isBandMember(b)?`<div class="role">You play ${esc(b.myRole||"in this band")}</div>`
+                      :`<div class="meta" style="margin-top:6px">${b._count||0} ${(b._count===1)?"person plays":"people play"} in this band</div>`}`);
   h.appendChild(head);
+
+  /* ---- people waiting to join, for whoever runs the band ---- */
+  if(LIVE&&b._admin&&(b._requests||[]).length){
+    h.appendChild(el("div","sechead",`<h2>Wants to join</h2><span class="more">${b._requests.length}</span>`));
+    b._requests.forEach(q=>{
+      const row=el("div","evrow");
+      row.style.cssText="align-items:center;gap:10px";
+      row.innerHTML=`<div class="av" style="width:42px;height:42px;flex:0 0 42px">${art(hash(q.user_id),initials(q.name),{size:42})}</div>
+        <div class="what" style="flex:1;min-width:0"><b>${esc(q.name)}</b>
+          <span>${esc(q.plays||"Wants to join")}</span>
+          ${q.note?`<span style="opacity:.75">“${esc(q.note)}”</span>`:""}</div>`;
+      const acts=el("div");acts.style.cssText="display:flex;gap:8px;flex:0 0 auto";
+      const yes=el("button","btn","Approve");yes.style.cssText="padding:9px 14px;font-size:13.5px";
+      const no=el("button","btn ghost","Decline");no.style.cssText="padding:9px 14px;font-size:13.5px";
+      yes.onclick=()=>answerBandRequest(b.id,q.id,true,yes,no);
+      no.onclick =()=>answerBandRequest(b.id,q.id,false,yes,no);
+      acts.appendChild(yes);acts.appendChild(no);row.appendChild(acts);
+      h.appendChild(row);
+    });
+  }
+
+  /* ---- asking to join, for anyone who is not in it ---- */
+  if(LIVE&&!isBandMember(b)){
+    const box=el("div");box.style.padding="4px 16px 0";
+    const st=b._request;
+    if(st==="pending"){
+      box.appendChild(el("div","privnote",`${LOCK} You've asked to join. They'll see it next time they open the band.`));
+    }else if(st==="declined"){
+      box.appendChild(el("div","privnote",`${GLOBE} They said not this time. You can still come to their shows.`));
+    }else{
+      const jb=el("button","btn","Ask to join");jb.style.width="100%";
+      jb.onclick=()=>askToJoinBand(b.id,jb);
+      box.appendChild(jb);
+      box.appendChild(el("div","privnote",`${LOCK} Someone in the band has to say yes. Members can see practice times and addresses, so it isn't automatic.`));
+    }
+    h.appendChild(box);
+  }
 
   const mem0=(b.members||[]).length;
   const ne=(()=>{const vis=visibleEvents(b,isBandMember(b));const now=Date.now();
@@ -4835,20 +5146,20 @@ function openAlerts(){
 function updateBadge(){
   /* Unread messages and people waiting on an answer both belong on the
      Chats tab — in both cases somebody is waiting for you. */
-  const n=Object.keys(S.unread).length+(LIVE?REQUESTS.length:0),b=$("#nb");
+  const n=Object.keys(S.unread).length+(LIVE?REQUESTS.length+BANDREQS.length:0),b=$("#nb");
   if(n){b.hidden=false;b.textContent=n>9?"9+":n}else b.hidden=true;
 }
 const CTX={feed:"Boston · 12 online",disc:"Musicians near you",radio:"Jammy Radio · live",chats:"Messages and bands",you:"Your profile"};
 function go(v){
   document.querySelectorAll(".view").forEach(s=>s.classList.toggle("on",s.id==="v-"+v));
   document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("on",b.dataset.v===v));
-  $("#ctx").textContent=CTX[v]||"";
+  $("#ctx").textContent=(v==="disc"&&discoverMode()==="gigs")?"Live music near you":(CTX[v]||"");
   if(v!=="chats"){$("#chat").classList.remove("on");chatId=null;stopWatchingThread()}
   if(v!=="you"){$("#bandlist").classList.remove("on");$("#bandview").classList.remove("on")}
   const fab=$("#fab");
   if(fab)fab.hidden=!(v==="feed"||v==="you");
   if(v==="feed")renderFeed();if(v==="disc")refreshDiscover();if(v==="radio")renderRadio();
-  if(v==="chats"){renderChats();if(LIVE){loadConvos();loadRequests()}}if(v==="you")renderYou();
+  if(v==="chats"){renderChats();if(LIVE){loadConvos();loadRequests();loadBandRequests()}}if(v==="you")renderYou();
 }
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>go(b.dataset.v));
 $("#b-alerts").onclick=openAlerts;
@@ -5067,6 +5378,14 @@ const DB = {
   cancelBandEvent(id){ return JammyAPI.bands.cancelEvent(id); },
   mySchedule(days){ return JammyAPI.bands.schedule_mine(days); },
 
+  /* ---- gigs, and getting into a band ---- */
+  gigsNearMe(miles,days){ return JammyAPI.bands.gigsNearMe(miles,days); },
+  bandPage(id){ return JammyAPI.bands.page(id); },
+  askToJoin(id,inst,role,note){ return JammyAPI.bands.askToJoin(id,inst,role,note); },
+  bandRequests(id){ return JammyAPI.bands.requests(id); },
+  bandRequestCount(){ return JammyAPI.bands.requestCount(); },
+  answerBandRequest(req,yes){ return JammyAPI.bands.answerRequest(req,yes); },
+
   /* ---- safety ---- */
   block(id){ return JammyAPI.safety.block(id); },
   unblock(id){ return JammyAPI.safety.unblock(id); },
@@ -5274,7 +5593,7 @@ function renderStep(){
           /* Signed in. If a profile already exists, this is a returning
              user and the rest of onboarding is just in their way. */
           const me=await DB.loadMe();
-          if(me.data){adoptProfile(me.data);S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();
+          if(me.data){adoptProfile(me.data);S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();
             $("#onb").classList.remove("on");go("disc");toast("Welcome back");return}
         }
         obGo(3);toast("Verified");
@@ -5447,7 +5766,7 @@ async function finishOnboarding(){
   }else if(obDraft.loc){
     S.me.loc=obDraft.loc;
   }
-  S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();obGo(10);
+  S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();obGo(10);
 }
 $("#ob-back").onclick=()=>obGo(obStep-1);
 $("#ob-skip").onclick=()=>obGo(obStep+1);
@@ -5478,7 +5797,7 @@ async function resumeSession(){
   if(me.data){
     adoptProfile(me.data);S.onboarded=true;save();
     $("#onb").classList.remove("on");renderAll();
-    loadDeck();loadConvos();loadRequests();loadBands();
+    loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();
     setTimeout(()=>locateOnLaunch(),250);
   }else{
     /* Signed in, but the profile was never finished — drop them back

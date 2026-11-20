@@ -70,7 +70,12 @@ function makeAPI(opts = {}) {
       addEvent: async (b, ev) => { log.push("addEvent:" + ev.kind + ":" + (ev.visibility || "")); return opts.addEventFails ? err(opts.addEventFails) : { data: "ev1", error: null }; },
       cancelEvent: async () => ({ data: true, error: null }),
       schedule_mine: async () => ({ data: [], error: null }),
-      gigsNearMe: async () => ({ data: [], error: null }),
+      gigsNearMe: async (m, d) => { log.push("gigsNearMe:" + m); return { data: opts.gigs || [], error: null }; },
+      page: async (b) => { log.push("bandPage:" + b); return { data: opts.bandPage ? [opts.bandPage] : [], error: null }; },
+      askToJoin: async (b) => { log.push("askToJoin:" + b); return opts.askFails ? err(opts.askFails) : { data: "sent", error: null }; },
+      requests: async (b) => { log.push("bandRequests:" + (b || "all")); return { data: opts.bandRequests || [], error: null }; },
+      requestCount: async () => ({ data: (opts.bandRequests || []).length, error: null }),
+      answerRequest: async (r, y) => { log.push("answerBandRequest:" + r + ":" + y); return opts.answerBandFails ? err(opts.answerBandFails) : { data: true, error: null }; },
       media: async () => ({ data: [], error: null }),
     },
     clips: {}, radio: { chart: async () => ({ data: [], error: null }), logPlay: async () => ({}) },
@@ -400,7 +405,12 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     await wait(90);
     const chats = w.document.querySelector("#chats").textContent;
     ok(!/Flaming Weirdos|Buttheads/i.test(chats), "none of the demo bands appear");
-    ok(/Band chats arrive with/i.test(chats), "says plainly that bands aren't ready");
+    /* The copy used to say bands weren't ready. They are, so an empty
+       list should point at the two ways in, not apologise for a gap. */
+    ok(/Start one from your profile|ask to join one/i.test(chats),
+       "and the empty list says how to get a band instead");
+    ok(!/arrive with the bands feature/i.test(chats),
+       "with no leftover copy claiming bands don't work yet");
   }
 
 
@@ -649,6 +659,200 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     ok(w.__peek("bandEvents(ALLBANDS()[0]).length") === 2, "the diary is unchanged");
     const t = w.document.querySelector("#toast");
     ok(t && /only the band/i.test(t.textContent), "and the reason is shown");
+  }
+
+  /* ----------------------------------------------------------
+     38. The fake API must keep up with the real one.
+
+     Every bug in this section so far has been the same bug: a new
+     call added to api.js, not added to the fake, and a test suite
+     that then proves nothing about the screen using it. This reads
+     the real api.js and insists the fake answers everything the
+     app's DB facade actually reaches for.
+     ---------------------------------------------------------- */
+  console.log("\n38. THE FAKE API still matches the real one");
+  {
+    const apiSrc = fs.readFileSync(APP.replace(/index\.html$/, "api.js"), "utf8");
+    const appSrc = fs.readFileSync(APP, "utf8");
+
+    // every JammyAPI.<group>.<method> the app actually calls
+    const used = new Set();
+    for (const m of appSrc.matchAll(/JammyAPI\.(\w+)\.(\w+)\s*\(/g)) used.add(m[1] + "." + m[2]);
+
+    const fake = makeAPI({});
+    const missing = [...used].filter((k) => {
+      const [g, fn] = k.split(".");
+      return !(fake[g] && typeof fake[g][fn] === "function");
+    });
+    ok(missing.length === 0,
+       missing.length ? "the fake API is missing: " + missing.join(", ")
+                      : `the fake answers all ${used.size} calls the app makes`);
+
+    // and nothing the app calls is missing from the real api.js either
+    const notReal = [...used].filter((k) => {
+      const fn = k.split(".")[1];
+      // `sb` is the raw Supabase client passed straight through, not a
+      // list of named helpers, so there is nothing to match against
+      if (k.startsWith("sb.")) return false;
+      // defined as `name:` , `name(` or `async name(`
+      return !new RegExp("(^|[\\s{,])(async\\s+)?" + fn + "\\s*[:(]").test(apiSrc);
+    });
+    ok(notReal.length === 0,
+       notReal.length ? "the app calls something api.js does not define: " + notReal.join(", ")
+                      : "and every one of them exists in api.js");
+  }
+
+  /* ----------------------------------------------------------
+     39. GIGS NEAR YOU — the screen that was missing entirely.
+
+     The database rule and gigs_near_me() both existed; no screen
+     called either, so a public gig was correctly public and
+     completely invisible.
+     ---------------------------------------------------------- */
+  const GIGS = [{
+    event_id: "e9", band_id: "band9", band_name: "The Fog Signals",
+    band_genres: ["Indie"], band_avatar: null,
+    starts_at: new Date(Date.now() + 6 * 864e5).toISOString(),
+    place: "The Middle East", city: "Boston", miles: 2.8, i_am_member: false
+  }];
+
+  console.log("\n39. GIGS NEAR YOU asks the server and lists what it gets");
+  {
+    const { w, api } = await boot(true, signedIn({ gigs: GIGS }));
+    await wait(120);
+    w.__peek('go("disc")'); await wait(40);
+    w.document.querySelector("#m-gigs").click(); await wait(140);
+
+    ok(api._log.some((l) => l.startsWith("gigsNearMe")), "switching to Gigs asks the server");
+    const txt = w.document.querySelector("#gigs").textContent;
+    ok(/Fog Signals/.test(txt), "and the gig is on the screen");
+    ok(/Middle East/.test(txt), "with where it is");
+    ok(/2\.8|3 mi/.test(txt), "and how far away");
+    ok(w.document.querySelector("#gigs").style.display !== "none", "the gig list is visible");
+    ok(w.document.querySelector("#deck").style.display === "none", "and the people deck is not");
+  }
+
+  console.log("\n39b. AND NOTHING NEARBY says so, instead of looking broken");
+  {
+    const { w } = await boot(true, signedIn({ gigs: [] }));
+    await wait(120);
+    w.__peek('go("disc")'); await wait(40);
+    w.document.querySelector("#m-gigs").click(); await wait(140);
+    const txt = w.document.querySelector("#gigs").textContent;
+    ok(/No gigs coming up/i.test(txt), "an empty list explains itself");
+    ok(/Look anywhere/i.test(txt), "and offers to widen the search");
+  }
+
+  /* ----------------------------------------------------------
+     40. A BAND YOU ARE NOT IN can be opened from a gig
+     ---------------------------------------------------------- */
+  const PAGE = {
+    id: "band9", name: "The Fog Signals", city: "Boston",
+    genres: ["Indie"], about: "We practise Tuesdays", avatar_path: null,
+    member_count: 3, next_gig: new Date(Date.now() + 6 * 864e5).toISOString(),
+    i_am_member: false, i_am_admin: false, my_request: null
+  };
+
+  console.log("\n40. TAPPING A GIG opens that band, even though you're not in it");
+  {
+    const { w, api } = await boot(true, signedIn({ gigs: GIGS, bandPage: PAGE }));
+    await wait(120);
+    w.__peek('go("disc")'); await wait(40);
+    w.document.querySelector("#m-gigs").click(); await wait(140);
+
+    const row = w.document.querySelector("#gigs .evrow");
+    ok(!!row, "the gig is a row you can press");
+    row.click(); await wait(220);
+
+    ok(api._log.includes("bandPage:band9"), "pressing it fetches that band");
+    ok(w.document.querySelector("#bandview").classList.contains("on"), "and opens the band page");
+    const body = w.document.querySelector("#bv-body").textContent;
+    ok(/Fog Signals/.test(body), "showing the band");
+    ok(/not in this band/i.test(body), "and saying plainly that you are not in it");
+  }
+
+  console.log("\n41. ASK TO JOIN is there, and does something");
+  {
+    const { w, api } = await boot(true, signedIn({ gigs: GIGS, bandPage: PAGE }));
+    await wait(120);
+    w.__peek('openBand("band9")'); await wait(220);
+
+    const btns = [...w.document.querySelectorAll("#bv-body button")];
+    const ask = btns.find((b) => /ask to join/i.test(b.textContent));
+    ok(!!ask, "a non-member is offered Ask to join");
+    ask.click(); await wait(160);
+    ok(api._log.includes("askToJoin:band9"), "and pressing it reaches the server");
+
+    const body = w.document.querySelector("#bv-body").textContent;
+    ok(/asked to join/i.test(body), "and the page then says it is waiting on them");
+  }
+
+  console.log("\n41b. AND IT IS NOT AUTOMATIC — nobody joins by pressing a button");
+  {
+    const { w } = await boot(true, signedIn({ gigs: GIGS, bandPage: PAGE }));
+    await wait(120);
+    w.__peek('openBand("band9")'); await wait(220);
+    const ask = [...w.document.querySelectorAll("#bv-body button")]
+      .find((b) => /ask to join/i.test(b.textContent));
+    ask.click(); await wait(160);
+    ok(w.__peek('S.joined.includes("band9")') === false,
+       "asking does not put you in the band");
+  }
+
+  /* ----------------------------------------------------------
+     42. APPROVE AND DECLINE must be pressable.
+
+     This is the bug she hit twice: the handler lived somewhere the
+     click never reached. Press the real button, not the function.
+     ---------------------------------------------------------- */
+  const BANDREQ = [{
+    request_id: "q1", band_id: "band1", band_name: "The Flaming Weirdos",
+    user_id: "u7", display_name: "Hasan", handle: "hasan", photo_path: null,
+    instruments: ["Bass"], role_label: "Bass", note: "saw you at the Middle East",
+    asked_at: new Date().toISOString()
+  }];
+
+  console.log("\n42. SOMEBODY ASKING TO JOIN shows up with Approve and Decline");
+  {
+    const { w, api } = await boot(true, signedIn({ bands: BAND, bandRequests: BANDREQ }));
+    await wait(120);
+    w.__peek('go("chats")'); await wait(160);
+
+    const txt = w.document.querySelector("#chats").textContent;
+    ok(/Wants to join your band/i.test(txt), "it appears in Chats, where the other requests are");
+    ok(/Hasan/.test(txt), "with who is asking");
+    ok(/Middle East/.test(txt), "and what they said");
+
+    const yes = w.document.querySelector("[data-bq-yes]");
+    ok(!!yes, "Approve is a real button");
+    yes.click(); await wait(160);
+    ok(api._log.some((l) => l === "answerBandRequest:q1:true"),
+       "and pressing it reaches the server");
+    ok(!/Wants to join your band/i.test(w.document.querySelector("#chats").textContent),
+       "and the request clears off the screen");
+  }
+
+  console.log("\n42b. DECLINE reaches the server too, and connects nobody");
+  {
+    const { w, api } = await boot(true, signedIn({ bands: BAND, bandRequests: BANDREQ }));
+    await wait(120);
+    w.__peek('go("chats")'); await wait(160);
+    w.document.querySelector("[data-bq-no]").click(); await wait(160);
+    ok(api._log.some((l) => l === "answerBandRequest:q1:false"), "Decline is wired too");
+  }
+
+  console.log("\n42c. A REFUSED approval puts the request back rather than losing it");
+  {
+    const { w } = await boot(true, signedIn({
+      bands: BAND, bandRequests: BANDREQ,
+      answerBandFails: "only someone who runs this band can answer that" }));
+    await wait(120);
+    w.__peek('go("chats")'); await wait(160);
+    w.document.querySelector("[data-bq-yes]").click(); await wait(220);
+    const t = w.document.querySelector("#toast");
+    ok(t && /only someone who runs/i.test(t.textContent), "the reason is shown");
+    ok(/Wants to join your band/i.test(w.document.querySelector("#chats").textContent),
+       "and the request is still there");
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);
