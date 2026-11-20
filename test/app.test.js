@@ -779,6 +779,46 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     ok(/not in this band/i.test(body), "and saying plainly that you are not in it");
   }
 
+  console.log("\n40b. AND IT DOES NOT CALL YOU A MEMBER OF IT");
+  /* THE BUG STELLA FOUND. The Members list always opened with you,
+     tagged YOU, and the count always added one for you, whether or not
+     you were in the band. The first person ever to open a band page
+     from a gig was told he was in a band he had never joined. */
+  {
+    const OTHERROSTER = [
+      { user_id: "u9", display_name: "Hey Sandoval", handle: "hey", photo_path: null,
+        instruments: ["Guitar"], role_label: "Guitar", is_admin: true, on_jammy: true },
+    ];
+    const { w } = await boot(true, signedIn({
+      gigs: GIGS,
+      bandPage: { ...PAGE, member_count: 1 },
+      roster: OTHERROSTER }));
+    await wait(120);
+    w.__peek('openBand("band9")'); await wait(260);
+
+    const body = w.document.querySelector("#bv-body");
+    const txt = body.textContent;
+    ok(/Hey Sandoval/.test(txt), "the people actually in the band are listed");
+    ok(body.querySelectorAll(".mrow2").length === 1,
+       "and there is one member row, not one for you as well");
+    ok(body.querySelectorAll(".tagme").length === 0,
+       "there is no YOU tag on a band you are not in");
+    ok(/Members[\s\S]{0,40}?1 person/.test(txt),
+       "and the count is the people in it, not them plus you");
+  }
+
+  console.log("\n40c. BUT ON YOUR OWN BAND you are still there, once");
+  {
+    const { w } = await boot(true, signedIn({ bands: BAND, roster: ROSTER }));
+    await wait(120);
+    w.__peek('openBand("band1")'); await wait(260);
+    const body = w.document.querySelector("#bv-body");
+    ok(body.querySelectorAll(".tagme").length === 1, "you are tagged YOU exactly once");
+    const txt = body.textContent;
+    ok((txt.match(/Stella Saleh/g) || []).length <= 1, "and appear once, not twice");
+    ok(/Members[\s\S]{0,40}?2 people/.test(txt), "and the count includes you");
+  }
+
   console.log("\n41. ASK TO JOIN is there, and does something");
   {
     const { w, api } = await boot(true, signedIn({ gigs: GIGS, bandPage: PAGE }));

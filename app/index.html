@@ -4694,12 +4694,25 @@ function openBand(id){
   }
 
   const mem=bandMembers(b);
-  h.appendChild(el("div","sechead",`<h2>Members</h2><span class="more">${mem.length+1} people</span>`));
-  const me=el("div","mrow2");
-  me.innerHTML=`<div class="av">${meAvatar()}</div>
-    <div class="t"><b>${esc(S.me.name||"You")}</b><span>${esc(b.myRole||"")}</span></div>
-    <span class="tagme">YOU</span>`;
-  h.appendChild(me);
+  /* THE ONE STELLA FOUND. This list always opened with you, tagged YOU,
+     and the count always added one for you — whether or not you were in
+     the band. Nobody could hit it before, because until gigs made band
+     pages reachable the only people who could open one were members. The
+     first person ever to open a band page from a gig was told he was in
+     a band he had never joined.
+
+     You are in this list only if you are actually in the band. */
+  const total=member ? mem.length+1
+                     : Math.max(mem.length,(LIVE&&b._count)||0);
+  h.appendChild(el("div","sechead",
+    `<h2>Members</h2><span class="more">${total} ${total===1?"person":"people"}</span>`));
+  if(member){
+    const me=el("div","mrow2");
+    me.innerHTML=`<div class="av">${meAvatar()}</div>
+      <div class="t"><b>${esc(S.me.name||"You")}</b><span>${esc(b.myRole||"")}</span></div>
+      <span class="tagme">YOU</span>`;
+    h.appendChild(me);
+  }
   /* Whoever runs the band can take somebody out of it. Before this there
      was no way to, which mattered because the old joining rule let people
      add themselves — and a member can read the rehearsal address. */

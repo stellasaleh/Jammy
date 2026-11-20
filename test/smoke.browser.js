@@ -47,8 +47,12 @@ const rows = {
           band_genres:["Indie"],band_avatar:null,
           starts_at:new Date(Date.now()+6*864e5).toISOString(),
           place:"The Middle East",city:"Boston",miles:2.8,i_am_member:false}],
+  otherRoster: [{user_id:"u9",display_name:"Hey Sandoval",handle:"hey",photo_path:null,
+                 instruments:["Guitar"],role_label:"Guitar",is_admin:true,on_jammy:true},
+                {user_id:"u8",display_name:"Rue Delacroix",handle:"rue",photo_path:null,
+                 instruments:["Drums"],role_label:"Drums",is_admin:false,on_jammy:true}],
   bandPage: [{id:"band9",name:"The Fog Signals",city:"Boston",genres:["Indie"],
-              about:"We practise Tuesdays",avatar_path:null,member_count:3,
+              about:"We practise Tuesdays",avatar_path:null,member_count:2,
               next_gig:new Date(Date.now()+6*864e5).toISOString(),
               i_am_member:false,i_am_admin:false,my_request:null}],
   bandRequests: [{request_id:"q1",band_id:"band1",band_name:"The Flaming Weirdos",
@@ -80,7 +84,11 @@ window.JammyAPI = {
           send: (c,b) => { window.__calls.push("send"); return okr({id:"m1"}); },
           subscribe: () => ({}), unsubscribe: () => {}, markRead: () => okr({}) },
   bands: { mine: () => { window.__calls.push("bands.mine"); return okr(rows.bands); },
-           roster: () => okr(rows.roster), schedule: () => okr(rows.schedule),
+           /* A band you are NOT in has a roster without you in it. The
+              fake used to hand back your own band's roster for every
+              band, which quietly hid the bug this now checks for. */
+           roster: (b) => okr(b === "band9" ? rows.otherRoster : rows.roster),
+           schedule: () => okr(rows.schedule),
            /* A real server answers my_bands() with the band it just made.
               A fake that forgets to is a fake that tests a world which
               does not exist — and it hid a freeze in openBand(). */
@@ -364,6 +372,17 @@ const PRIME = `try { localStorage.setItem("jammy:v1", JSON.stringify({ onboarded
     ok(/not in this band/i.test(body), "and saying you are not in it");
     ok(/Middle East/.test(body), "and the gig is on their page too");
     ok(!/Dane St|bring the/i.test(body), "with no address and no band note");
+
+    /* THE BUG STELLA FOUND. The Members list always opened with you,
+       tagged YOU, and the count always added one for you, whether or not
+       you were in the band. Nobody could hit it until gigs made band
+       pages reachable by people who are not members. */
+    ok((await page.$$("#bv-body .tagme")).length === 0,
+       "and no YOU tag, because you are not one of them");
+    ok(!/Stella Saleh/.test(body),
+       "and you are not in the members list at all");
+    ok(/Members[\s\S]{0,40}?2 people/.test(body),
+       "and the count is the band, not the band plus you");
   }
 
   console.log("\n-- asking to join a band you are not in --");
