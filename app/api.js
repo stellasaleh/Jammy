@@ -410,15 +410,58 @@
   const feed = {
     /* one query, counts already on the row, blocks filtered in the database.
        The old version pulled every like and comment row just to show a number. */
-    posts: (before = null, pageSize = 20) =>
-      call(() => sb.rpc("feed_page", { before: before, page_size: pageSize })),
-    post: (body, tag, trackId) =>
+    /* The cursor is the last row's time AND its id. Time alone looked
+       enough until two posts landed in the same second, and then the next
+       page quietly skipped every post that shared the boundary — which is
+       most likely exactly when the feed is busy. */
+    posts: (before = null, pageSize = 20, beforeId = null) =>
+      call(() => sb.rpc("feed_page", {
+        before: before, page_size: pageSize, before_id: beforeId,
+      })),
+    post: (body, tag, trackId, mediaPath) =>
       call(async () => {
         const me = await uid();
         return sb.from("posts").insert({
           author_id: me, body, tag: tag || null, track_id: trackId || null,
+          media_path: mediaPath || null,
         }).select().single();
       }),
+
+    /* A picture or a video on a post.
+
+       Every file goes to <your user id>/… because the storage rule checks
+       that the first folder is your own id — that is what stops one person
+       writing over another's. The bucket is public to read, like every
+       social app, so the URL can go straight in an <img> or <video>. */
+    async upload(blob, kind) {
+      const me = await uid();
+      if (!me) return fail(new Error("not signed in"));
+      const type = blob.type || (kind === "video" ? "video/mp4" : "image/jpeg");
+      const ext = ({
+        "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp",
+        "image/gif": "gif", "video/mp4": "mp4", "video/webm": "webm",
+        "video/quicktime": "mov",
+      })[type] || (kind === "video" ? "mp4" : "jpg");
+
+      if (blob.size > 25 * 1024 * 1024)
+        return fail(new Error("That file is bigger than 25MB, which is the limit."));
+
+      const path = `${me}/posts/${crypto.randomUUID()}.${ext}`;
+      const up = await call(() =>
+        sb.storage.from("jammy-media").upload(path, blob, {
+          contentType: type, cacheControl: "3600",
+        })
+      );
+      if (up.error) return up;
+      return { data: path, error: null };
+    },
+
+    /* The bucket is public, so this needs no round trip and never expires. */
+    mediaUrl: (path) =>
+      path ? sb.storage.from("jammy-media").getPublicUrl(path).data.publicUrl : null,
+
+    remove: (postId) =>
+      call(() => sb.from("posts").delete().eq("id", postId)),
     like: (postId, on) =>
       call(async () => {
         const me = await uid();
@@ -460,6 +503,19 @@
       call(() => sb.from("post_likes")
         .select("user_id, profiles(display_name, handle, photo_path)")
         .eq("post_id", postId).limit(limit)),
+  };
+
+  /* ---------------- YOUR ACCOUNT ---------------- */
+  const account = {
+    /* Everything Jammy holds about you, as one JSON document — the
+       "Download my data" the privacy policy promises. Neither of these
+       takes a user id, on purpose: a function that did would be one
+       mistake away from handing out somebody else's life. */
+    export: () => call(() => sb.rpc("export_my_data")),
+
+    /* Permanent, and it needs the word "delete". Apple rejects apps that
+       let you create an account and not remove it. */
+    remove: (confirm) => call(() => sb.rpc("delete_my_account", { confirm })),
   };
 
   /* ---------------- RADIO ---------------- */
@@ -521,5 +577,5 @@
       }),
   };
 
-  window.JammyAPI = { sb, auth, profile, discover, chat, clips, bands, feed, radio, safety };
+  window.JammyAPI = { sb, auth, profile, discover, chat, clips, bands, feed, radio, safety, account };
 })();

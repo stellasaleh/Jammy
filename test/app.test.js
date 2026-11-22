@@ -15,7 +15,15 @@ function makeAPI(opts = {}) {
   const api = {
     _log: log,
     _blocked: new Set(),
-    sb: { rpc: async (n, a) => { log.push("rpc:" + n); return { data: [], error: null }; },
+    sb: { rpc: async (n, a) => {
+            log.push("rpc:" + n);
+            /* a few RPCs the app calls directly; the rest answer empty */
+            if (n === "weekly_chart")   return { data: opts.chart || [], error: null };
+            if (n === "listening_now")  return { data: opts.listeners ?? 0, error: null };
+            if (n === "add_post")       return opts.addPostFails ? err(opts.addPostFails) : { data: "newpost", error: null };
+            if (n === "my_posts" || n === "posts_by") return { data: opts.myPosts || [], error: null };
+            return { data: [], error: null };
+          },
           functions: { invoke: async () => ({ data: null, error: new Error("no edge fn") }) } },
     auth: {
       sendEmailCode: async (e) => { log.push("sendEmailCode:" + e); return opts.sendFails ? err(opts.sendFails) : { data: {}, error: null }; },
@@ -59,7 +67,10 @@ function makeAPI(opts = {}) {
       unsubscribe: (ch) => { log.push("unsubscribe"); },
       markRead: async (c) => { log.push("markRead:" + c); return { data: {}, error: null }; },
     },
-    feed: { posts: async () => ({ data: [], error: null }), comments: async () => ({ data: [], error: null }), comment: async () => ({ data: {}, error: null }), deleteComment: async () => ({ data: {}, error: null }), subscribeComments: () => ({}), unsubscribe: () => {}, like: async () => ({ data: {}, error: null }), likers: async () => ({ data: [], error: null }), post: async () => ({ data: {}, error: null }) },
+    feed: {
+      upload: async (blob, kind) => { log.push("upload:" + kind); return opts.uploadFails ? err(opts.uploadFails) : { data: "u1/posts/x.jpg", error: null }; },
+      mediaUrl: (p) => p ? "https://files.example/" + p : null,
+      remove: async (id) => { log.push("deletePost:" + id); return opts.deletePostFails ? err(opts.deletePostFails) : { data: null, error: null }; }, posts: async (before, n, beforeId) => { log.push("feedPage:" + (before ? "more" : "first")); return { data: opts.feed || [], error: null }; }, comments: async () => ({ data: [], error: null }), comment: async () => ({ data: {}, error: null }), deleteComment: async () => ({ data: {}, error: null }), subscribeComments: () => ({}), unsubscribe: () => {}, like: async () => ({ data: {}, error: null }), likers: async () => ({ data: [], error: null }), post: async () => ({ data: {}, error: null }) },
     bands: {
       mine: async () => { log.push("myBands"); return { data: opts.bands || [], error: null }; },
       roster: async (b) => { log.push("roster:" + b); return { data: opts.roster || [], error: null }; },
@@ -79,7 +90,15 @@ function makeAPI(opts = {}) {
       answerRequest: async (r, y) => { log.push("answerBandRequest:" + r + ":" + y); return opts.answerBandFails ? err(opts.answerBandFails) : { data: true, error: null }; },
       media: async () => ({ data: [], error: null }),
     },
-    clips: {}, radio: { chart: async () => ({ data: [], error: null }), logPlay: async () => ({}) },
+    clips: {
+      send: async (c, blob, meta) => { log.push("sendClip:" + c); return opts.clipFails ? err(opts.clipFails) : { data: { id: "m1" }, error: null }; },
+      url: async (p) => ({ data: { signedUrl: "https://files.example/" + p }, error: null }),
+    },
+    radio: { chart: async () => ({ data: opts.chart || [], error: null }), logPlay: async () => ({}) },
+    account: {
+      export: async () => { log.push("exportMyData"); return { data: opts.exportData || { profile: { display_name: "Stella Saleh" }, posts: [] }, error: null }; },
+      remove: async (w) => { log.push("deleteAccount:" + w); return opts.deleteAccountFails ? err(opts.deleteAccountFails) : { data: { deleted: true }, error: null }; },
+    },
     safety: {
       blocked: async () => ({ data: [], error: null }),
       block: async (id) => {
@@ -901,6 +920,224 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     ok(t && /only someone who runs/i.test(t.textContent), "the reason is shown");
     ok(/Wants to join your band/i.test(w.document.querySelector("#chats").textContent),
        "and the request is still there");
+  }
+
+  /* ----------------------------------------------------------
+     43. THE FEED. Until now the first screen anyone opened was
+     sixteen invented posts by eight invented musicians — shown to
+     real signed-in people, not only in the demo.
+     ---------------------------------------------------------- */
+  const FEED = [
+    { id: "f1", author_id: "u5", body: "Looking for a drummer. Tuesdays, Brighton.",
+      tag: "looking", track_id: null, media_path: null,
+      fields: { instrument: "Drums", when: "Tue evenings", where: "Brighton" },
+      created_at: new Date(Date.now() - 36e5).toISOString(),
+      like_count: 3, comment_count: 1, author_name: "Rue Delacroix",
+      author_handle: "rue", author_city: "Boston", author_photo: null,
+      liked_by_me: false, mine: false },
+    { id: "f2", author_id: "u1", body: "New pedalboard",
+      tag: "note", track_id: null, media_path: "u1/posts/board.jpg", fields: {},
+      created_at: new Date(Date.now() - 72e5).toISOString(),
+      like_count: 0, comment_count: 0, author_name: "Stella Saleh",
+      author_handle: "stella", author_city: "Boston", author_photo: null,
+      liked_by_me: false, mine: true },
+  ];
+
+  console.log("\n43. A SIGNED-IN FEED is only what people actually posted");
+  {
+    const { w, api } = await boot(true, signedIn({ feed: FEED }));
+    await wait(200);
+    ok(api._log.some((l) => l.startsWith("feedPage")), "the feed is fetched from the server");
+
+    const txt = w.document.querySelector("#feed").textContent;
+    ok(/Rue Delacroix/.test(txt), "a real post is on it");
+    ok(/Brighton/.test(txt), "with the fields that make it useful, not just the prose");
+
+    /* the invented ones, by name */
+    ok(!/Kitchen Demo/.test(txt), "and nothing from the demo");
+    ok(w.__peek("LIVEPOSTS.length") === 2, "the feed is exactly what the server sent");
+    ok(w.__peek("allPosts().length") === 2, "and nothing is mixed in beside it");
+    ok(w.__peek("SEED_POSTS.length > 0") === true,
+       "(the demo posts still exist, for the signed-out demo)");
+    ok(w.__peek("allStories().length") === 0, "and no invented stories either");
+  }
+
+  console.log("\n43b. SIGNED OUT, the demo is still the demo");
+  {
+    const { w } = await boot(false);
+    await wait(160);
+    ok(w.__peek("allPosts().length") > 0,
+       `the signed-out demo still has its feed (${w.__peek("allPosts().length")} posts)`);
+    ok(w.__peek("allStories().length > 0") === true, "and its stories");
+  }
+
+  console.log("\n43c. AN EMPTY FEED says so rather than looking broken");
+  {
+    const { w } = await boot(true, signedIn({ feed: [] }));
+    await wait(200);
+    const txt = w.document.querySelector("#feed").textContent;
+    ok(/no |nothing|be the first/i.test(txt), "an empty feed explains itself");
+    ok(w.__peek("LIVEPOSTS.length") === 0, "and has nothing invented in it");
+  }
+
+  console.log("\n44. LIKING moves the heart AND the number");
+  {
+    const { w, api } = await boot(true, signedIn({ feed: FEED }));
+    await wait(200);
+    const before = w.__peek('LIVEPOSTS.find(p=>p.id==="f1").likes');
+    const btn = w.document.querySelector('[data-like="f1"]');
+    ok(!!btn, "a post has a like button");
+    btn.click(); await wait(160);
+    const after = w.__peek('LIVEPOSTS.find(p=>p.id==="f1").likes');
+    ok(after === before + 1, `the count moves with the heart (${before} -> ${after})`);
+    ok(api._log.some((l) => l.indexOf("toggle_like") > -1 || l.indexOf("like") > -1),
+       "and it reaches the server");
+  }
+
+  console.log("\n45. DELETING YOUR POST has to reach the server");
+  {
+    const { w, api } = await boot(true, signedIn({ feed: FEED }));
+    await wait(200);
+    w.__peek('(function(){ var b=document.querySelector(\'[data-post="f2"]\'); return !!b })');
+    /* go through the app, not the DOM, since the menu lives in a sheet */
+    w.__peek('openPostMenu && openPostMenu("f2")');
+    await wait(120);
+    const del = [...w.document.querySelectorAll("[data-a]")].find((b) => b.dataset.a === "delete");
+    if (del) {
+      del.click(); await wait(200);
+      ok(api._log.some((l) => l === "deletePost:f2"), "deleting a post tells the database");
+      ok(w.__peek("LIVEPOSTS.length") === 1, "and it leaves the feed");
+    } else {
+      ok(false, "could not reach the delete action");
+    }
+  }
+
+  console.log("\n46. DELETE MY ACCOUNT is real, and asks in the page");
+  {
+    const { w, api } = await boot(true, signedIn({}));
+    await wait(160);
+    w.__peek("openDeleteAccount()"); await wait(140);
+
+    const body = w.document.querySelector("#sheetbody").textContent;
+    ok(/cannot be undone/i.test(body), "it says plainly that it cannot be undone");
+    ok(/sent/i.test(body), "and what happens to messages you already sent");
+    ok(!!w.document.querySelector("#da-word"), "and makes you type the word");
+
+    /* pressing it without the word must do nothing at all */
+    w.document.querySelector("#da-go").click(); await wait(140);
+    ok(!api._log.some((l) => l.startsWith("deleteAccount")),
+       "pressing delete without typing the word does not delete anything");
+
+    w.document.querySelector("#da-word").value = "delete";
+    w.document.querySelector("#da-go").click(); await wait(220);
+    ok(api._log.some((l) => l === "deleteAccount:delete"), "typing it deletes for real");
+  }
+
+  console.log("\n46b. DOWNLOAD MY DATA, which the privacy policy promises");
+  {
+    const { w, api } = await boot(true, signedIn({}));
+    await wait(160);
+    w.__peek("exportMyData()"); await wait(220);
+    ok(api._log.includes("exportMyData"), "it asks the server for everything it holds");
+  }
+
+  /* ----------------------------------------------------------
+     47. THE CHART. It used to be invented tracks with invented
+     play counts, under a banner reading "2,140 LISTENING" to a
+     real signed-in person when the true number was nobody.
+     ---------------------------------------------------------- */
+  const CHART = [{
+    track_id: "t1", title: "Kitchen Floor", key: "Am", bpm: 96,
+    audio_path: "u5/t1.mp3", owner_id: "u5", artist_name: "Rue Delacroix",
+    artist_handle: "rue", artist_photo: null, plays: 11, listeners: 4,
+    last_week_rank: 3, rank: 1, is_new: false, move: 2, mine: false,
+  }];
+
+  console.log("\n47. THE CHART counts real plays and says who is really listening");
+  {
+    const { w, api } = await boot(true, signedIn({ chart: CHART, listeners: 2 }));
+    await wait(220);
+    w.__peek('go("radio")'); await wait(200);
+
+    ok(api._log.includes("rpc:weekly_chart"), "the chart is fetched from the server");
+    ok(api._log.includes("rpc:listening_now"), "and so is the number listening");
+
+    const txt = w.document.querySelector("#radio").textContent;
+    ok(/Kitchen Floor/.test(txt), "a real track is on it");
+    ok(/Rue Delacroix/.test(txt), "with who made it");
+    ok(/2 LISTENING/.test(txt), "and the true number listening");
+    ok(!/2,140/.test(txt), "not the made-up one");
+  }
+
+  console.log("\n47b. ONE listener reads as one, not '1 listenings'");
+  {
+    const { w } = await boot(true, signedIn({ chart: CHART, listeners: 1 }));
+    await wait(220);
+    w.__peek('go("radio")'); await wait(200);
+    ok(/1 LISTENING/.test(w.document.querySelector("#radio").textContent),
+       "one person listening says so");
+  }
+
+  console.log("\n47c. AN EMPTY CHART says so instead of inventing one");
+  {
+    const { w } = await boot(true, signedIn({ chart: [], listeners: 0 }));
+    await wait(220);
+    w.__peek('go("radio")'); await wait(200);
+    const txt = w.document.querySelector("#radio").textContent;
+    ok(/Nothing on the chart yet/i.test(txt), "an empty chart explains itself");
+    ok(!/2,140|LISTENING/.test(txt), "with no invented numbers anywhere on it");
+    ok(w.__peek("chartData().length") === 0, "and nothing invented behind it");
+  }
+
+  console.log("\n47d. SIGNED OUT, the demo chart is still the demo");
+  {
+    const { w } = await boot(false);
+    await wait(180);
+    ok(w.__peek("chartData().length") > 0, "the signed-out demo still has a chart");
+  }
+
+  /* ----------------------------------------------------------
+     48. JAM CLIPS. A clip used to be kept on the phone that made
+     it and answered by an invented reply — in a real conversation,
+     a message from somebody who never sent it.
+     ---------------------------------------------------------- */
+  console.log("\n48. A JAM CLIP goes to the other person, and nobody answers for them");
+  {
+    const { w, api } = await boot(true, signedIn({
+      convos: [{ id: "c1", kind: "dm", other_id: "u5", other_name: "Rue Delacroix",
+                 other_handle: "rue", other_photo: null, last_body: "hi",
+                 last_at: new Date().toISOString(), unread: 0, messages: [] }] }));
+    await wait(200);
+    w.__peek('chatId="c1"');
+
+    const before = api._log.length;
+    w.__peek(`sendClip(new Blob(["x"],{type:"audio/webm"}), 4, "Jam clip")`);
+    await wait(300);
+
+    const after = api._log.slice(before);
+    ok(after.some((l) => l.startsWith("sendClip:c1")), "the clip is sent to the conversation");
+
+    /* the invented replies, by their actual words */
+    const thread = JSON.stringify(w.__peek("S.threads") || {});
+    ok(!/that tone is filthy|Your time is good/.test(thread),
+       "and nothing replies on the other person's behalf");
+    ok(w.__peek("(S.threads.c1||[]).length") === 0,
+       "and the clip is not quietly kept on this phone instead");
+  }
+
+  console.log("\n48b. AND A CLIP THAT FAILS TO SEND says so");
+  {
+    const { w } = await boot(true, signedIn({
+      clipFails: "Upload failed",
+      convos: [{ id: "c1", kind: "dm", other_id: "u5", other_name: "Rue",
+                 other_handle: "rue", other_photo: null, last_body: "hi",
+                 last_at: new Date().toISOString(), unread: 0, messages: [] }] }));
+    await wait(200);
+    w.__peek('chatId="c1"');
+    w.__peek(`sendClip(new Blob(["x"],{type:"audio/webm"}), 4, "Jam clip")`);
+    await wait(300);
+    const t = w.document.querySelector("#toast");
+    ok(t && /upload failed/i.test(t.textContent), "the reason is shown rather than silence");
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

@@ -38,6 +38,20 @@ const rows = {
   /* What band_schedule() hands a NON-MEMBER: the public gig, with no
      address and no note, and no sign of the practice at all. The real
      function decides this; the fake must not be more generous than it. */
+  feed: [{id:"f1",author_id:"u5",body:"Looking for a drummer. Tuesdays, Brighton.",
+          tag:"looking",track_id:null,media_path:null,
+          fields:{instrument:"Drums",when:"Tue evenings",where:"Brighton"},
+          created_at:new Date(Date.now()-36e5).toISOString(),
+          like_count:3,comment_count:1,author_name:"Rue Delacroix",
+          author_handle:"rue",author_city:"Boston",author_photo:null,
+          liked_by_me:false,mine:false}],
+  feed: [{id:"f1",author_id:"u5",body:"Looking for a drummer. Tuesdays, Brighton.",
+          tag:"looking",track_id:null,media_path:null,
+          fields:{instrument:"Drums",when:"Tue evenings",where:"Brighton"},
+          created_at:new Date(Date.now()-36e5).toISOString(),
+          like_count:3,comment_count:1,author_name:"Rue Delacroix",
+          author_handle:"rue",author_city:"Boston",author_photo:null,
+          liked_by_me:false,mine:false}],
   schedule: [{id:"e9",kind:"gig",
               starts_at:new Date(Date.now()+6*864e5).toISOString(),
               ends_at:null,place:"The Middle East",address:null,note:null,
@@ -117,9 +131,17 @@ window.JammyAPI = {
            answerRequest: (r,y) => { window.__calls.push("bands.answerRequest:"+r+":"+y);
                                      rows.bandRequests = []; return okr(true); },
            media: () => okr([]) },
-  feed: { posts: () => okr([]), comments: () => okr([]), comment: () => okr({}),
+  feed: { posts: (b,n,bid) => { window.__calls.push("feed.posts:"+(b?"more":"first")); return okr(rows.feed); },
+          comments: () => okr([]), comment: () => okr({}),
           deleteComment: () => okr({}), subscribeComments: () => ({}), unsubscribe: () => {},
-          like: () => okr({}), likers: () => okr([]), post: () => okr({}) },
+          like: () => okr({}), likers: () => okr([]), post: () => okr({}),
+          upload: (blob,kind) => { window.__calls.push("feed.upload:"+kind); return okr("u1/posts/x.jpg"); },
+          mediaUrl: (p) => p ? "/_m/"+p : null,
+          remove: (id) => { window.__calls.push("feed.remove:"+id);
+                            rows.feed = rows.feed.filter(x=>x.id!==id); return okr(null); } },
+  account: { export: () => { window.__calls.push("account.export");
+                             return okr({profile:{display_name:"Stella Saleh"},posts:[]}); },
+             remove: (w) => { window.__calls.push("account.remove:"+w); return okr({deleted:true}); } },
   clips: { send: () => okr({}), url: () => okr("") },
   radio: { chart: () => okr([]), logPlay: () => okr({}) },
   safety: { blocked: () => okr([]), block: (id) => { window.__calls.push("block"); return okr({}); },
@@ -151,6 +173,8 @@ const PRIME = `try { localStorage.setItem("jammy:v1", JSON.stringify({ onboarded
   const ctx = await browser.newContext({ viewport: { width: 420, height: 900 } });
   await ctx.addInitScript(PRIME);
   const page = await ctx.newPage();
+  await page.addInitScript(() => { window.__pageErrors = [];
+    window.addEventListener("error", e => window.__pageErrors.push(String(e.message))); });
   const errors = [];
   page.on("pageerror", (e) => { if (!/TUNNEL|fonts\.g/.test(e.message)) errors.push(e.message); });
   page.on("console", (m) => { if (m.type() === "error" && !/TUNNEL|fonts\.g/.test(m.text())) errors.push(m.text()); });
@@ -243,6 +267,26 @@ const PRIME = `try { localStorage.setItem("jammy:v1", JSON.stringify({ onboarded
     pass++; console.log("  ✓ the yes button can be pressed");
     await page.waitForTimeout(500);
     ok((await calls()).some((x) => x.startsWith("swipe:")), "and it records a swipe");
+  }
+
+  console.log("\n-- the feed, which used to be eight invented musicians --");
+  await page.evaluate(() => go("feed")); await page.waitForTimeout(600);
+  {
+    const txt = await page.textContent("#feed");
+    ok(await page.evaluate(() => LIVEPOSTS.length > 0), "the feed came from the server");
+    ok(/Rue Delacroix/.test(txt), "and a real post is on it");
+    ok(/Brighton/.test(txt), "with what they are looking for, not just the prose");
+    ok(!/Kitchen Demo/.test(txt), "and nothing invented");
+    const stories = await page.$$("#stories .story");
+    ok(stories.length <= 1, `no invented stories either (${stories.length} tiles, only your own)`);
+  }
+
+  clear();
+  if (await clickIt('[data-like="f1"]', "the like button can be pressed")) {
+    pass++; console.log("  ✓ the like button can be pressed");
+    await page.waitForTimeout(400);
+    const n = await page.evaluate(() => LIVEPOSTS.find(p => p.id === "f1").likes);
+    ok(n === 4, `the count moves with the heart (now ${n})`);
   }
 
   console.log("\n-- your own band: the roster, removing somebody, and leaving --");
@@ -513,6 +557,36 @@ const PRIME = `try { localStorage.setItem("jammy:v1", JSON.stringify({ onboarded
   }
 
   ok(errors.length === 0, "no errors during the whole walk" + (errors.length ? " — " + errors.slice(0, 2).join(" / ") : ""));
+
+
+  console.log("\n-- the last thing, because it ends the session --");
+  console.log("\n-- delete my account, which Apple requires --");
+  await page.evaluate(() => openDeleteAccount()); await page.waitForTimeout(400);
+  {
+    const body = await page.textContent("#sheetbody");
+    ok(/cannot be undone/i.test(body), "it says plainly that it cannot be undone");
+    ok(!!(await page.$("#da-word")), "and makes you type the word");
+    clear();
+    if (await clickIt("#da-go", "the delete button can be pressed")) {
+      pass++; console.log("  ✓ the delete button can be pressed");
+      await page.waitForTimeout(300);
+      ok(!(await calls()).some((c) => c.startsWith("account.remove")),
+         "and pressing it WITHOUT the word deletes nothing");
+    }
+    await page.fill("#da-word", "delete");
+    clear();
+    if (await clickIt("#da-go", "and with the word it can be pressed")) {
+      pass++; console.log("  ✓ and with the word it can be pressed");
+      await page.waitForTimeout(600);
+      ok((await calls()).some((c) => c === "account.remove:delete"),
+         "and that reaches the server");
+      /* the old reset rebuilt the settings without `filters`, so the next
+         render threw and the screen went blank with nothing to explain it */
+      const errs = await page.evaluate(() => window.__pageErrors || []);
+      ok(errs.length === 0, errs.length ? "it threw: " + errs[0] : "and clearing the app does not throw");
+    }
+  }
+
 
   console.log(`\n${pass} passed, ${fail} failed`);
   await browser.close();

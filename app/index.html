@@ -1866,9 +1866,18 @@ const BANDS=[
 
 /* ============ state ============ */
 const KEY="jammy:v1";
-let S={me:{...ME_DEFAULT},seen:{},connections:[],threads:{},unread:{},likes:{},posts:[],plays:{},joined:["b1","b2","b3","b4"],
-  firstRun:true,onboarded:false,account:null,myBands:[],bandEvents:{},readAlerts:[],eventVis:{},bandMedia:{},blocks:[],reports:[],comments:{},saved:{},bandPhotos:{},adRequests:[],adStats:{},
-  filters:{radius:7,needs:[],genreMode:"any",minGenres:0,excludeSame:true,remoteOk:false,view:"deck"}};
+/* One definition of a fresh install, used both at startup and when the app
+   is reset. It used to be written out twice, and the copy in the reset
+   button left out `filters` — so clearing the device threw on the next
+   render and the screen went blank with nothing to explain it. */
+function freshState(){
+  return {me:{...ME_DEFAULT},seen:{},connections:[],threads:{},unread:{},likes:{},posts:[],plays:{},
+    joined:["b1","b2","b3","b4"],
+    firstRun:true,onboarded:false,account:null,myBands:[],bandEvents:{},readAlerts:[],eventVis:{},
+    bandMedia:{},blocks:[],reports:[],comments:{},saved:{},bandPhotos:{},adRequests:[],adStats:{},
+    filters:{radius:7,needs:[],genreMode:"any",minGenres:0,excludeSame:true,remoteOk:false,view:"deck"}};
+}
+let S=freshState();
 try{const raw=localStorage.getItem(KEY);if(raw)S=Object.assign(S,JSON.parse(raw))}catch(e){}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
 S.filters=Object.assign({radius:7,needs:[],genreMode:"any",minGenres:0,excludeSame:true,remoteOk:false,view:"deck"},S.filters||{});
@@ -1956,13 +1965,82 @@ function waveBars(uid,n){
 }
 
 /* ============ feed ============ */
-function allPosts(){return [...S.posts,...SEED_POSTS].filter(p=>p.who==="me"||!isBlocked(p.who))}
+/* The feed, once you are signed in, is only what people have actually
+   posted. SEED_POSTS and STORIES are the demo — eight posts and seven
+   stories by musicians who do not exist. They used to be mixed in for
+   everybody, which meant the first screen a real person opened was mostly
+   invented. They belong to the signed-out demo and nowhere else. */
+let LIVEPOSTS=[];
+function allPosts(){
+  const pool=LIVE?LIVEPOSTS:[...S.posts,...SEED_POSTS];
+  return pool.filter(p=>p.who==="me"||!isBlocked(p.who));
+}
+function allStories(){return LIVE?[]:STORIES}
 function connected(id){return S.connections.includes(id)}
+
+/* ---------- the feed, from the database ---------- */
+/* The cursor is the last row's time AND its id together. Two posts written
+   in the same second share a timestamp, and on a tie a time-only cursor
+   skips every post on the boundary, silently, with no gap to see. */
+let feedCursor=null, feedCursorId=null, feedEnd=false, feedLoading=false;
+
+/* A row from feed_page() in the shape the screen already draws. The author
+   is remembered the same way Discover remembers people, so their name and
+   photo are already there when somebody taps the post. */
+function dbRowToPost(r){
+  if(r.author_id) remember([rowToArtist({
+    id:r.author_id, display_name:r.author_name, handle:r.author_handle,
+    city:r.author_city, photo_path:r.author_photo, instruments:[], genres:[]})]);
+  return {
+    id:r.id,
+    who:r.mine?"me":r.author_id,
+    authorId:r.author_id,
+    at:r.created_at,
+    type:r.tag||"note",
+    txt:r.body||"",
+    fields:r.fields||{},
+    likes:r.like_count||0,
+    comments:r.comment_count||0,
+    liked:!!r.liked_by_me,
+    media:serverMedia(r.media_path),
+    mine:!!r.mine,
+    server:true
+  };
+}
+
+/* A stored file, in the shape mediaBlock() and the viewer already expect.
+   `url` is what marks it as living on the server rather than on this phone:
+   everything that draws media prefers it and falls back to local storage,
+   which is what the demo still uses. */
+function serverMedia(path){
+  if(!path)return null;
+  const ext=(path.split(".").pop()||"").toLowerCase();
+  const video=["mp4","webm","mov","m4v"].includes(ext);
+  const url=DB.mediaUrl(path);
+  return {id:path, kind:video?"video":"photo", url, poster:video?null:url, path};
+}
+
+async function loadFeed(more){
+  if(!LIVE||feedLoading)return;
+  if(more&&feedEnd)return;
+  feedLoading=true;
+  const r=await DB.feedPage(more?feedCursor:null,20,more?feedCursorId:null);
+  feedLoading=false;
+  if(r.error){toast(authMessage(r.error));return}
+  const rows=(r.data||[]).map(dbRowToPost);
+  LIVEPOSTS=more?LIVEPOSTS.concat(rows):rows;
+  feedEnd=rows.length<20;
+  if(rows.length){
+    const last=rows[rows.length-1];
+    feedCursor=last.at;feedCursorId=last.id;
+  }else if(!more){feedCursor=null;feedCursorId=null}
+  renderFeed();
+}
 function renderStories(){
   const c=$("#stories");c.innerHTML="";
   const meS=el("div","story",`<div class="ring" style="background:var(--surface2)"><div class="av">${meAvatar()}</div></div><span>Your post</span>`);
   meS.onclick=()=>openComposer();c.appendChild(meS);
-  STORIES.filter(x=>!isBlocked(x.id)).forEach(s=>{
+  allStories().filter(x=>!isBlocked(x.id)).forEach(s=>{
     const p=A(s.id);
     const d=el("div","story"+(s.live?" live":""),
       `<div class="ring"><div class="av">${avatarOf(p)}</div></div>${s.live?`<span class="lv">${esc(s.txt||"LIVE")}</span>`:""}<span>${esc(p.name.split(" ")[0])}</span>`);
@@ -2053,6 +2131,18 @@ function openPostMenu(id){
     $("#sheet").classList.remove("on");
     if(a==="edit")return openComposer(post);
     if(a==="delete"){
+      /* Signed in, deleting has to reach the database. Dropping it from the
+         screen only would leave the post up for everybody else, which is
+         the opposite of what deleting means. */
+      if(LIVE){
+        const keep=LIVEPOSTS.slice();
+        LIVEPOSTS=LIVEPOSTS.filter(p=>p.id!==id);renderFeed();renderYou();
+        DB.deletePost(id).then(r=>{
+          if(r.error){LIVEPOSTS=keep;renderFeed();renderYou();toast(authMessage(r.error))}
+          else toast("Post deleted");
+        });
+        return;
+      }
       S.posts=S.posts.filter(p=>p.id!==id);save();renderFeed();renderYou();toast("Post deleted");return;
     }
     if(a==="save"){
@@ -2298,13 +2388,22 @@ $("#feed").addEventListener("click",e=>{
   const lk=e.target.closest("[data-like]");
   if(lk){
     const id=lk.dataset.like, was=!!S.likes[id], next=!was;
-    /* paint immediately — a like that waits on a round trip feels broken */
+    /* Paint immediately — a like that waits on a round trip feels broken.
+       The number has to move with the heart too: a heart that fills while
+       the count stays put reads as not having worked. */
+    const row=LIVEPOSTS.find(p=>p.id===id), before=row?row.likes:0;
+    if(row)row.likes=Math.max(0,(row.likes||0)+(next?1:-1));
     S.likes[id]=next;save();renderFeed();
     DB.toggleLike(id,next).then(r=>{
       if(r.error){
+        if(row)row.likes=before;
         S.likes[id]=was;save();renderFeed();
         toast("Couldn't save that like — check your connection");
-      }else renderFeed();
+      }else{
+        const d=Array.isArray(r.data)?r.data[0]:r.data;   /* the server's count is the real one */
+        if(row&&d&&typeof d.like_count==="number")row.likes=d.like_count;
+        renderFeed();
+      }
     });
     return;
   }
@@ -2434,6 +2533,10 @@ function openComments(postId){
         return;
       }
       if(r.data&&r.data.id){temp.id=r.data.id}
+      /* the card's comment count has to move too, or the comment appears in
+         the sheet and the post still says none */
+      const row=LIVEPOSTS.find(p=>p.id===postId);
+      if(row)row.comments=(row.comments||0)+1;
       renderFeed();
     };
     sb.querySelector("#cm-send").onclick=send;
@@ -2635,11 +2738,41 @@ function composerForm(kind,editing){
   $("#cp-back").onclick=()=>{editing?$("#sheet").classList.remove("on"):openComposer()};
   if($("#cp-cancel"))$("#cp-cancel").onclick=()=>$("#sheet").classList.remove("on");
 
-  $("#cp-go").onclick=()=>{
+  $("#cp-go").onclick=async()=>{
     const d=draft();
     if((!d.txt.trim()||d.txt==="…")&&!Object.keys(d.fields).length&&!media)
       return toast("Add a few words, or a photo");
     if(kind==="track"&&!myTracks.length)return toast("Upload a track from your profile first");
+
+    /* Signed in, a post goes to the database and the picture goes to
+       storage, so it is there on every device and everyone else can see
+       it. The file is uploaded first because the row refers to it; if the
+       upload fails nothing is written and the composer stays open with
+       everything still in it. */
+    if(LIVE&&!editing){
+      const go=$("#cp-go");
+      go.disabled=true;go.textContent=media?"Uploading…":"Posting…";
+      let path=null;
+      if(media){
+        const blob=await clipGet(media.id);
+        if(!blob){go.disabled=false;go.textContent="Post to the feed";
+          return toast("Couldn't read that file — try attaching it again")}
+        const up=await DB.uploadMedia(blob,media.kind);
+        if(up.error){go.disabled=false;go.textContent="Post to the feed";
+          return toast(authMessage(up.error))}
+        path=up.data;
+        go.textContent="Posting…";
+      }
+      const r=await DB.addPost(d.txt,kind,d.fields,path,null);
+      go.disabled=false;go.textContent="Post to the feed";
+      if(r.error)return toast(authMessage(r.error));
+      $("#sheet").classList.remove("on");
+      feedTab="all";feedShown=FEED_PAGE;
+      await loadFeed();renderYou();
+      toast("Posted");
+      return;
+    }
+
     if(editing){
       const i=S.posts.findIndex(p=>p.id===editing.id);
       if(i>=0)S.posts[i]=Object.assign({},S.posts[i],
@@ -3137,7 +3270,32 @@ $("#v-radar").onclick=()=>{S.filters.view="radar";save();refreshDiscover()};
 
 /* ============ radio + leaderboard ============ */
 let lbTab="week";
+
+/* The chart, from real plays. Everything below this line is the signed-out
+   demo — invented tracks, invented play counts, a made-up position change.
+   Signed in, every number on this screen is a true one, including when the
+   true one is nothing. */
+let LIVECHART=null, LIVELISTENERS=0, chartLoading=false;
+
+async function loadChart(){
+  if(!LIVE||chartLoading)return;
+  chartLoading=true;
+  const [c,l]=await Promise.all([DB.weeklyChart(10),DB.listeningNow()]);
+  chartLoading=false;
+  if(c.error){LIVECHART=[];renderRadio();return}
+  LIVECHART=(c.data||[]).map(r=>({
+    uid:r.track_id,
+    track:{id:r.track_id,title:r.title,key:r.key||"",bpm:r.bpm||0,path:r.audio_path},
+    artist:{id:r.owner_id,name:r.artist_name||r.artist_handle||"Someone",photo_path:r.artist_photo},
+    plays:Number(r.plays||0), listeners:r.listeners||0,
+    move:r.move||0, isNew:!!r.is_new, me:!!r.mine
+  }));
+  LIVELISTENERS=(l&&!l.error&&typeof l.data==="number")?l.data:0;
+  renderRadio();
+}
+
 function chartData(){
+  if(LIVE)return LIVECHART||[];
   const rows=[];
   ARTISTS.forEach(a=>a.tracks.forEach((t,i)=>{
     const uid=a.id+":"+t.title;
@@ -3160,9 +3318,26 @@ function chartData(){
 function renderRadio(){
   const r=$("#radio");r.innerHTML="";
   const chart=chartData(),top=chart[0];
+
+  /* An empty chart is the correct chart when nobody has uploaded anything
+     yet. It used to show invented tracks instead, under a banner reading
+     "2,140 LISTENING" when the true number was nobody. */
+  if(!top){
+    r.appendChild(el("div","empty",
+      LIVE&&LIVECHART===null
+      ? `<p style="font-size:13.5px">Loading the chart…</p>`
+      : `<h3>Nothing on the chart yet</h3>
+         <p>The chart is built from what people actually play. Put a recording on your profile and it can land here — every play from Jammy Radio or someone's profile counts.</p>`));
+    return;
+  }
+
   const np=el("div","nowplaying");
+  /* the real number of people listening right now, even when it is one */
+  const listening=LIVE
+    ? (LIVELISTENERS===1?"1 LISTENING":LIVELISTENERS+" LISTENING")
+    : "2,140 LISTENING";
   np.innerHTML=`<div class="art">${art(hash(top.uid),"",{k:"np"})}
-      <div class="lbl"><span class="live"></span>JAMMY RADIO · 2,140 LISTENING</div></div>
+      <div class="lbl"><span class="live"></span>JAMMY RADIO · ${esc(listening)}</div></div>
     <div class="bot"><div class="t"><h3>${esc(top.track.title)}</h3><span>${esc(top.artist.name)} · ${esc(top.track.key)} · ${top.track.bpm} bpm</span></div>
       <button class="pbtn" style="width:46px;height:46px" data-play="${esc(top.uid)}" data-rplay="0">${nowPlaying===top.uid?ICON_PAUSE:ICON_PLAY}</button></div>`;
   r.appendChild(np);
@@ -3882,15 +4057,89 @@ function renderYou(){
     row.onclick=fn;
     set.appendChild(row);
   });
-  const reset=el("button","btn ghost","Delete account and clear this device");reset.style.cssText="width:100%;margin:0 0 8px;color:#E5285C";
-  reset.onclick=()=>{try{localStorage.removeItem(KEY)}catch(e){}
-    S={me:{...ME_DEFAULT},seen:{},connections:[],threads:{},unread:{},likes:{},posts:[],plays:{},joined:["b1","b2","b3","b4"],
-      firstRun:false,onboarded:false,account:null};
-    save();renderAll();signOut();toast("Account deleted")};
+  /* Download my data. The privacy policy promises this in as many words:
+     "See your data. Settings, then Account and safety, then Download my
+     data." It did not exist. */
+  if(LIVE){
+    const dl=el("button","btn ghost","Download my data");dl.style.cssText="width:100%;margin:0 0 8px";
+    dl.onclick=()=>exportMyData(dl);
+    set.appendChild(dl);
+  }
+
+  /* Deleting used to clear this phone and sign you out, leaving the
+     account, the profile, the posts and the swipes exactly where they
+     were — so signing in again brought it all back. Apple rejects apps
+     that let you create an account and not delete it (5.1.1(v)), and the
+     privacy policy already promised otherwise. */
+  const reset=el("button","btn ghost",LIVE?"Delete my account":"Clear this device");
+  reset.style.cssText="width:100%;margin:0 0 8px;color:#E5285C";
+  reset.onclick=()=>LIVE?openDeleteAccount():clearThisDevice();
   set.appendChild(reset);
   set.appendChild(el("p","dimtext",`Jammy is free. Sponsored posts from music brands and venues pay for it — see the orange and green cards in the feed.`)).style.fontSize="12.5px";
   y.appendChild(set);
 }
+/* The signed-out demo has nothing on a server to delete, so the button
+   says what it actually does there. */
+function clearThisDevice(quiet){
+  try{localStorage.removeItem(KEY)}catch(e){}
+  S=freshState();S.firstRun=false;
+  LIVEPOSTS=[];LIVEBANDS=[];OTHERBANDS=[];BANDREQS=[];REQUESTS=[];
+  feedCursor=null;feedCursorId=null;feedEnd=false;
+  save();renderAll();signOut();
+  if(!quiet)toast("Cleared this device");
+}
+
+async function exportMyData(btn){
+  if(btn){btn.disabled=true;btn.textContent="Gathering…"}
+  const r=await DB.exportMyData();
+  if(btn){btn.disabled=false;btn.textContent="Download my data"}
+  if(r.error)return toast(authMessage(r.error));
+  const name="jammy-my-data-"+new Date().toISOString().slice(0,10)+".json";
+  const text=JSON.stringify(r.data,null,2);
+  /* Some app views have no Blob URLs. A data: URL downloads just as well,
+     and this is the only path, so there is no branch to get wrong. */
+  const url="data:application/json;charset=utf-8,"+encodeURIComponent(text);
+  const a=document.createElement("a");
+  a.href=url;a.download=name;document.body.appendChild(a);a.click();
+  document.body.removeChild(a);
+  toast("Saved "+name);
+}
+
+/* Deleting cannot be undone, so it asks in the page and makes you type the
+   word — the same word the database insists on. A confirm() dialog is no
+   good here: several browsers and the artifact viewer never show one, and
+   a confirmation that silently returns false is a Delete button that does
+   nothing at all. */
+function openDeleteAccount(){
+  const sb=$("#sheetbody");
+  sb.innerHTML=`<div class="grabber"></div>
+    <h2 style="font-size:22px;margin-bottom:4px">Delete your account</h2>
+    <p class="dimtext" style="font-size:13.5px;margin:0 0 14px">This cannot be undone.</p>
+    <ul style="font-size:14px;line-height:1.7;color:var(--dim);margin:0 0 16px;padding-left:20px">
+      <li>Your profile, posts, photos and recordings are removed.</li>
+      <li>You leave every band, and every connection goes.</li>
+      <li>Messages you already sent stay in the other person's conversation, the way a sent text does.</li>
+      <li>You can download everything first — the button above this one.</li>
+    </ul>
+    <div class="field"><label>Type <b>delete</b> to confirm</label>
+      <input id="da-word" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="delete"></div>
+    <button class="btn" id="da-go" style="width:100%;margin-top:4px;background:#E5285C">Delete my account</button>
+    <button class="btn ghost" id="da-no" style="width:100%;margin-top:9px">Keep my account</button>`;
+  $("#sheet").classList.add("on");
+  $("#da-no").onclick=()=>$("#sheet").classList.remove("on");
+  $("#da-go").onclick=async()=>{
+    const word=($("#da-word").value||"").trim().toLowerCase();
+    if(word!=="delete")return toast("Type the word delete to confirm");
+    const go=$("#da-go");go.disabled=true;go.textContent="Deleting…";
+    const r=await DB.deleteMyAccount(word);
+    if(r.error){go.disabled=false;go.textContent="Delete my account";
+      return toast(authMessage(r.error))}
+    $("#sheet").classList.remove("on");
+    clearThisDevice(true);
+    toast("Your account is gone");
+  };
+}
+
 /* photos live in their own sheet so the edit form stays short */
 function openPhotos(){
   const sb=$("#sheetbody"),me=S.me;
@@ -4051,11 +4300,31 @@ async function clipURL(id){
   return urlCache[id];
 }
 let clipAudio=null,clipPlayingId=null,clipRaf=null;
+/* Signed links last an hour, so one is kept only for that long. */
+const clipLinks={};
+async function clipSource(id){
+  if(String(id).startsWith("srv:")){
+    const path=String(id).slice(4);
+    const hit=clipLinks[path];
+    if(hit&&hit.until>Date.now())return hit.url;
+    const r=await DB.clipUrl(path);
+    if(r.error||!r.data)return null;
+    const url=r.data.signedUrl||r.data.signedURL||r.data;
+    clipLinks[path]={url,until:Date.now()+50*60*1000};
+    return url;
+  }
+  return clipURL(id);
+}
+
 async function playClip(id,btn,waveEl){
   if(clipPlayingId===id){stopClip();return}
   stopClip();stopAudio();
-  const u=await clipURL(id);
-  if(!u){toast("That clip isn't on this device any more");return}
+  /* "srv:<path>" is a clip that lives in storage rather than on this phone.
+     It is fetched as a short-lived signed link, never a permanent public
+     one: if the sender is blocked or leaves the conversation afterwards, a
+     fresh link simply is not issued. */
+  const u=await clipSource(id);
+  if(!u){toast("Couldn't open that clip");return}
   clipAudio=new Audio(u);
   clipPlayingId=id;
   if(btn)btn.innerHTML=ICON_PAUSE;
@@ -4189,9 +4458,28 @@ function finishRecording(auto){
 }
 async function sendClip(blob,secs,label){
   if(!chatId)return;
+  const {peaks,dur}=await peaksOf(blob);
+
+  /* Signed in, a clip goes to the other person: uploaded to storage, then
+     written as a message, the same as any other. It used to stay on this
+     phone and be answered by an invented reply — which in a real
+     conversation is a message from somebody who never sent it. */
+  if(LIVE){
+    const mic=$("#ch-mic");
+    if(mic)mic.disabled=true;
+    const r=await DB.sendClip(chatId,blob,{
+      durationMs:Math.round((dur||secs||0)*1000),
+      peaks:peaks||[], label:label||"Jam clip"
+    });
+    if(mic)mic.disabled=false;
+    if(r.error){toast(authMessage(r.error));return}
+    await loadThread(chatId);
+    renderChats();
+    return;
+  }
+
   const id="clip"+Date.now()+Math.floor(Math.random()*999);
   const ok=await clipPut(id,blob);
-  const {peaks,dur}=await peaksOf(blob);
   const msg={f:"me",kind:"audio",clipId:id,dur:dur||secs||0,peaks,
     label:label||"Jam clip",size:blob.size,stored:ok,t:""};
   S.threads[chatId]=S.threads[chatId]||[];
@@ -4298,8 +4586,11 @@ function mediaBlock(m){
   if(!m)return "";
   const ratio=(m.w&&m.h)?(m.w/m.h):1.5;
   const pad=Math.min(125,Math.max(56,100/ratio));
+  /* m.url means the file is on the server, so it is the same picture on
+     every device. m.poster is the local copy the demo makes on this phone. */
+  const src=m.poster||(m.kind!=="video"?m.url:null)||null;
   return `<div class="pmedia" data-media="${esc(m.id)}" style="padding-bottom:${pad.toFixed(1)}%">
-    ${m.poster?`<img src="${m.poster}" alt="${m.kind==="video"?"Video":"Photo"} attached to this post" loading="lazy">`
+    ${src?`<img src="${src}" alt="${m.kind==="video"?"Video":"Photo"} attached to this post" loading="lazy">`
              :`<div class="noposter">${art(hash(m.id),"",{k:"pm"})}</div>`}
     ${m.kind==="video"?`<span class="vplay"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg></span>
       <span class="vlen">${m.dur?mmss(m.dur):"Video"}</span>`:""}</div>`;
@@ -4312,10 +4603,12 @@ async function openMediaViewer(mediaId,post){
     <p class="dimtext" style="font-size:12.5px;margin:12px 0 0">${esc((post&&post.txt)||"")}</p>`;
   $("#sheet").classList.add("on");
   const stage=$("#mv-stage");
-  const url=await clipURL(mediaId);
+  /* A post from the server carries its own URL and opens anywhere. Only the
+     signed-out demo keeps media on the phone it was added from. */
+  const url=(m&&m.url)||await clipURL(mediaId);
   if(!url){
     stage.innerHTML=`<div class="empty"><h3>This file isn't on this device</h3>
-      <p style="font-size:13.5px">Photos and videos are stored on your phone in the demo. Once Jammy has a server they follow you everywhere.</p></div>`;
+      <p style="font-size:13.5px">In the signed-out demo, photos and videos stay on the phone they were added from. Posted for real, they follow you everywhere.</p></div>`;
     return;
   }
   stage.innerHTML = (m&&m.kind==="video")
@@ -5313,14 +5606,17 @@ function openSearch(){
           const row=el("button","rrow");
           row.innerHTML=`<div class="av" style="border-radius:13px">${bandArt(b)}</div>
             <div class="t"><b>${esc(b.name)}</b><span>${(b.genres||[]).join(" · ")} · ${esc(b.city||"")}</span></div>
-            <div class="d">${isBandMember(b)?"<b>Yours</b>":"<b>Join</b>"}</div>`;
+            <div class="d">${isBandMember(b)?"<b>Yours</b>":"<b>View</b>"}</div>`;
           row.onclick=()=>{$("#sheet").classList.remove("on");openBand(b.id)};
           host.appendChild(row);n++;});
       }
     }
     if(kind==="All"||kind==="Tracks"){
       const trks=[];
-      ARTISTS.forEach(a=>{if(isBlocked(a.id))return;a.tracks.forEach(t=>{if(hit(t.title)||hit(a.name))trks.push({a,t,uid:a.id+":"+t.title})})});
+      /* POOL(), not ARTISTS: signed in that is the real people the app has
+         seen, and searching the invented ones would put made-up songs by
+         made-up musicians into a real search. */
+      POOL().forEach(a=>{if(isBlocked(a.id))return;(a.tracks||[]).forEach(t=>{if(hit(t.title)||hit(a.name))trks.push({a,t,uid:a.id+":"+t.title})})});
       ALLBANDS().forEach(b=>bandTracks(b).forEach(t=>{
         if(mediaVis(t)!=="public"&&!isBandMember(b))return;
         if(hit(t.title)||hit(b.name))trks.push({a:{id:b.id,name:b.name},t,uid:b.id+":"+t.title})}));
@@ -5485,6 +5781,35 @@ const DB = {
   addBandEvent(id,ev){ return JammyAPI.bands.addEvent(id,ev); },
   cancelBandEvent(id){ return JammyAPI.bands.cancelEvent(id); },
   mySchedule(days){ return JammyAPI.bands.schedule_mine(days); },
+
+  /* ---- the feed ---- */
+  feedPage(before,n,beforeId){ return JammyAPI.feed.posts(before,n,beforeId); },
+  addPost(body,tag,fields,mediaPath,trackId){
+    return JammyAPI.sb.rpc("add_post",{
+      p_body:body||"", p_tag:tag||null, p_fields:fields||{},
+      p_media_path:mediaPath||null, p_track_id:trackId||null
+    }).then(r=>({data:r.data,error:r.error}));
+  },
+  uploadMedia(blob,kind){ return JammyAPI.feed.upload(blob,kind); },
+  mediaUrl(path){ return JammyAPI.feed.mediaUrl(path); },
+  /* toggleLike, comments, addComment and deleteComment already live further
+     down this object and handle the signed-out demo too — do not add second
+     copies here, because the later key silently wins. */
+  deletePost(id){ return JammyAPI.feed.remove(id); },
+
+  /* ---- jam clips ---- */
+  sendClip(convoId,blob,meta){ return JammyAPI.clips.send(convoId,blob,meta); },
+  clipUrl(path){ return JammyAPI.clips.url(path); },
+
+  /* ---- the chart ---- */
+  weeklyChart(n){ return JammyAPI.sb.rpc("weekly_chart",{limit_n:n||10}).then(r=>({data:r.data,error:r.error})); },
+  listeningNow(){ return JammyAPI.sb.rpc("listening_now").then(r=>({data:r.data,error:r.error})); },
+
+  /* ---- your account ---- */
+  exportMyData(){ return JammyAPI.account.export(); },
+  deleteMyAccount(word){ return JammyAPI.account.remove(word); },
+  myPosts(n){ return JammyAPI.sb.rpc("my_posts",{limit_n:n||50}).then(r=>({data:r.data,error:r.error})); },
+  postsBy(who,n){ return JammyAPI.sb.rpc("posts_by",{who,limit_n:n||50}).then(r=>({data:r.data,error:r.error})); },
 
   /* ---- gigs, and getting into a band ---- */
   gigsNearMe(miles,days){ return JammyAPI.bands.gigsNearMe(miles,days); },
@@ -5702,7 +6027,7 @@ function renderStep(){
           /* Signed in. If a profile already exists, this is a returning
              user and the rest of onboarding is just in their way. */
           const me=await DB.loadMe();
-          if(me.data){adoptProfile(me.data);S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();
+          if(me.data){adoptProfile(me.data);S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();
             $("#onb").classList.remove("on");go("disc");toast("Welcome back");return}
         }
         obGo(3);toast("Verified");
@@ -5875,7 +6200,7 @@ async function finishOnboarding(){
   }else if(obDraft.loc){
     S.me.loc=obDraft.loc;
   }
-  S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();obGo(10);
+  S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();obGo(10);
 }
 $("#ob-back").onclick=()=>obGo(obStep-1);
 $("#ob-skip").onclick=()=>obGo(obStep+1);
@@ -5906,7 +6231,7 @@ async function resumeSession(){
   if(me.data){
     adoptProfile(me.data);S.onboarded=true;save();
     $("#onb").classList.remove("on");renderAll();
-    loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();
+    loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();
     setTimeout(()=>locateOnLaunch(),250);
   }else{
     /* Signed in, but the profile was never finished — drop them back

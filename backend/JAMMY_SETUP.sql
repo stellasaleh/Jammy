@@ -4014,3 +4014,627 @@ begin
 end $$;
 
 
+-- ############################################################
+-- ##  19_feed.sql
+-- ############################################################
+
+-- ============================================================
+--  JAMMY — 19_feed.sql
+--  THE FRONT PAGE, FOR REAL. Run after 01–18.
+--
+--  WHY THIS EXISTS
+--  The posts table, feed_page(), likes and comments have all been
+--  here since the beginning. Nothing in the app ever called them.
+--  So the first screen anyone opens was sixteen invented posts by
+--  eight invented musicians, shown to real signed-in people.
+--
+--  Same shape as the gigs problem: the database half was built and
+--  the screen was not.
+--
+--  Two things are missing from the table, and both of them are
+--  what makes a Jammy post different from a status update:
+--
+--  1. The fields. "Drums · Tuesdays and Sundays · Brighton" is the
+--     useful part of looking for a drummer. There was nowhere to
+--     put it, so it would have been lost in the prose.
+--
+--  2. A post with nothing but a picture. `body` was NOT NULL with
+--     a minimum of one character, so a photo of the new pedalboard
+--     needed a caption to exist at all.
+--
+--  Safe to run twice.
+-- ============================================================
+
+-- ------------------------------------------------------------
+--  1. The fields
+-- ------------------------------------------------------------
+alter table posts add column if not exists fields jsonb not null default '{}'::jsonb;
+
+-- Keep it small. This is a handful of short labels, not a document,
+-- and without a limit it is a place to paste anything.
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'posts_fields_small' and conrelid = 'posts'::regclass
+  ) then
+    alter table posts add constraint posts_fields_small
+      check (pg_column_size(fields) <= 2048);
+  end if;
+end $$;
+
+-- ------------------------------------------------------------
+--  2. A picture can be the whole post
+--
+--  body stays NOT NULL so nothing already written has to change;
+--  it is now allowed to be empty, but only when there is something
+--  else to look at. An entirely empty post is still refused.
+-- ------------------------------------------------------------
+do $$
+declare c text;
+begin
+  select conname into c from pg_constraint
+   where conrelid = 'posts'::regclass and contype = 'c'
+     and pg_get_constraintdef(oid) like '%char_length(body)%';
+  if c is not null then
+    execute format('alter table posts drop constraint %I', c);
+  end if;
+end $$;
+
+alter table posts alter column body set default '';
+update posts set body = '' where body is null;
+alter table posts alter column body set not null;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'posts_say_something' and conrelid = 'posts'::regclass
+  ) then
+    alter table posts add constraint posts_say_something
+      check (
+        char_length(body) <= 2000
+        and (char_length(btrim(body)) > 0
+             or media_path is not null
+             or track_id is not null
+             or fields <> '{}'::jsonb)
+      );
+  end if;
+end $$;
+
+-- ------------------------------------------------------------
+--  3. feed_page, carrying the fields
+--
+--  Postgres will not widen a function in place, so it goes first.
+--  SECURITY DEFINER with a pinned search_path, like everything
+--  else that has to see past a row rule — here, blocked_between().
+-- ------------------------------------------------------------
+--  FOUND BY THE TEST. Paging was "older than this timestamp", and two
+--  posts written in the same second share one. On a tie the second page
+--  skipped every post that shared the boundary time — quietly, with no
+--  gap to see. Busy minutes are exactly when it would have happened.
+--
+--  The cursor is now the time AND the id together, which is unique, so
+--  a tie has an order and nothing falls through it.
+drop function if exists feed_page(timestamptz, int);
+drop function if exists feed_page(timestamptz, int, uuid);
+
+create or replace function feed_page(
+  before timestamptz default null,
+  page_size int default 20,
+  before_id uuid default null
+) returns table (
+  id uuid, author_id uuid, body text, tag text, track_id uuid, media_path text,
+  fields jsonb, created_at timestamptz, like_count int, comment_count int,
+  author_name text, author_handle text, author_city text, author_photo text,
+  liked_by_me boolean, mine boolean
+)
+language sql stable security definer set search_path = public, extensions as $$
+  select p.id, p.author_id, p.body, p.tag, p.track_id, p.media_path,
+         p.fields, p.created_at, p.like_count, p.comment_count,
+         pr.display_name, pr.handle, pr.city, pr.photo_path,
+         exists (select 1 from post_likes l
+                  where l.post_id = p.id and l.user_id = (select auth.uid())),
+         (p.author_id = (select auth.uid()))
+  from posts p
+  join profiles pr on pr.id = p.author_id
+  where (before is null
+         or p.created_at < before
+         or (p.created_at = before and before_id is not null and p.id < before_id))
+    and not pr.is_banned
+    and not blocked_between(p.author_id, (select auth.uid()))
+  order by p.created_at desc, p.id desc
+  limit least(greatest(page_size, 1), 50);
+$$;
+
+-- ------------------------------------------------------------
+--  4. Posting, in one call
+--
+--  Done from the app as a bare insert, a post with a picture was
+--  two steps that could half-happen: the file uploaded and the row
+--  never written, leaving an orphan in storage and nothing on the
+--  screen. The upload still happens first — it has to — but the row
+--  is one call that either works or does not.
+-- ------------------------------------------------------------
+create or replace function add_post(
+  p_body text default '',
+  p_tag text default null,
+  p_fields jsonb default '{}'::jsonb,
+  p_media_path text default null,
+  p_track_id uuid default null
+)
+returns uuid
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+  me uuid := (select auth.uid());
+  id_out uuid;
+begin
+  if me is null then raise exception 'not signed in'; end if;
+
+  if coalesce(btrim(p_body),'') = ''
+     and p_media_path is null and p_track_id is null
+     and coalesce(p_fields,'{}'::jsonb) = '{}'::jsonb then
+    raise exception 'A post needs something in it — a few words, a picture or a track.';
+  end if;
+
+  -- you may only attach a file out of your own folder
+  if p_media_path is not null
+     and split_part(p_media_path, '/', 1) <> me::text then
+    raise exception 'that file is not yours';
+  end if;
+
+  insert into posts (author_id, body, tag, fields, media_path, track_id)
+  values (me, coalesce(btrim(p_body),''), nullif(btrim(coalesce(p_tag,'')),''),
+          coalesce(p_fields,'{}'::jsonb), p_media_path, p_track_id)
+  returning id into id_out;
+
+  return id_out;
+end $$;
+
+-- ------------------------------------------------------------
+--  5. Your own posts, for your profile
+-- ------------------------------------------------------------
+create or replace function my_posts(limit_n int default 50)
+returns table (
+  id uuid, body text, tag text, fields jsonb, media_path text, track_id uuid,
+  created_at timestamptz, like_count int, comment_count int
+)
+language sql stable security definer set search_path = public, extensions as $$
+  select p.id, p.body, p.tag, p.fields, p.media_path, p.track_id,
+         p.created_at, p.like_count, p.comment_count
+  from posts p
+  where p.author_id = (select auth.uid())
+  order by p.created_at desc
+  limit least(greatest(limit_n, 1), 100);
+$$;
+
+-- ------------------------------------------------------------
+--  6. Someone else's posts, for their profile
+-- ------------------------------------------------------------
+create or replace function posts_by(who uuid, limit_n int default 50)
+returns table (
+  id uuid, body text, tag text, fields jsonb, media_path text, track_id uuid,
+  created_at timestamptz, like_count int, comment_count int, liked_by_me boolean
+)
+language sql stable security definer set search_path = public, extensions as $$
+  select p.id, p.body, p.tag, p.fields, p.media_path, p.track_id,
+         p.created_at, p.like_count, p.comment_count,
+         exists (select 1 from post_likes l
+                  where l.post_id = p.id and l.user_id = (select auth.uid()))
+  from posts p
+  join profiles pr on pr.id = p.author_id
+  where p.author_id = who
+    and not pr.is_banned
+    and not blocked_between(who, (select auth.uid()))
+  order by p.created_at desc
+  limit least(greatest(limit_n, 1), 100);
+$$;
+
+-- ------------------------------------------------------------
+--  7. Speed
+-- ------------------------------------------------------------
+create index if not exists posts_author_recent_idx on posts (author_id, created_at desc);
+
+-- ------------------------------------------------------------
+--  8. Proof
+-- ------------------------------------------------------------
+do $$
+declare n int;
+begin
+  select count(*) into n from pg_proc p
+  join pg_namespace ns on ns.oid = p.pronamespace
+  where ns.nspname = 'public'
+    and p.proname in ('add_post','my_posts','posts_by','feed_page');
+  if n < 4 then
+    raise exception 'Jammy: expected 4 feed functions, found %', n;
+  end if;
+
+  if not exists (
+    select 1 from information_schema.columns
+    where table_name = 'posts' and column_name = 'fields') then
+    raise exception 'Jammy: posts has nowhere to keep what a post is looking for';
+  end if;
+
+  raise notice 'Jammy: the feed is real. Nothing on it is invented any more.';
+end $$;
+
+
+-- ############################################################
+-- ##  20_account.sql
+-- ############################################################
+
+-- ============================================================
+--  JAMMY — 20_account.sql
+--  DELETING YOUR ACCOUNT, AND TAKING YOUR DATA WITH YOU.
+--  Run after 01–19.
+--
+--  WHY THIS EXISTS
+--  "Delete account" cleared the phone and signed you out. The
+--  account, the profile, the posts, the messages and the swipes
+--  all stayed exactly where they were, and signing in again
+--  brought it all back.
+--
+--  Apple rejects apps that let you create an account and not
+--  delete it — guideline 5.1.1(v) — so this would have failed
+--  review. It is also simply what the privacy policy already
+--  promises, which makes the old button untrue as well as
+--  non-compliant.
+--
+--  WHAT THE POLICY SAYS, AND WHAT THIS DOES
+--    "your profile and content are removed"           -> gone
+--    "messages you sent may remain visible to the
+--     person who received them, in the same way a
+--     sent text does"                                 -> kept, with
+--                                                        no sender
+--    "See your data ... Download my data"             -> export_my_data()
+--
+--  Safe to run twice.
+-- ============================================================
+
+-- ------------------------------------------------------------
+--  1. One thing would have blocked the delete outright
+--
+--  ad_requests.reviewed_by points at profiles with NO ACTION, so
+--  deleting anyone who had ever reviewed an advertiser request
+--  would fail on a foreign key, with an error nobody could act
+--  on. It is a record of who reviewed something, not of who they
+--  are, so it loosens to set null like every other such column.
+-- ------------------------------------------------------------
+do $$
+declare c text;
+begin
+  select conname into c from pg_constraint
+   where conrelid = 'ad_requests'::regclass and contype = 'f'
+     and confrelid = 'profiles'::regclass and confdeltype = 'a';
+  if c is not null then
+    execute format('alter table ad_requests drop constraint %I', c);
+    alter table ad_requests
+      add constraint ad_requests_reviewed_by_fkey
+      foreign key (reviewed_by) references profiles on delete set null;
+    raise notice 'Jammy: a reviewed ad request no longer blocks deleting an account.';
+  end if;
+end $$;
+
+-- ------------------------------------------------------------
+--  2. Take your data with you
+--
+--  Everything Jammy holds about you, as one JSON document. This
+--  is the "Download my data" the privacy policy promises, and it
+--  is also what makes deletion a fair choice rather than a cliff.
+--
+--  It returns only the caller's own rows. There is no argument,
+--  deliberately: a function that took a user id would be one
+--  mistake away from handing out somebody else's life.
+-- ------------------------------------------------------------
+create or replace function export_my_data()
+returns jsonb
+language plpgsql stable security definer set search_path = public, extensions as $$
+declare
+  me uuid := (select auth.uid());
+  out jsonb;
+begin
+  if me is null then raise exception 'not signed in'; end if;
+
+  select jsonb_build_object(
+    'exported_at', now(),
+    'what_this_is', 'Everything Jammy holds about your account. '
+                 || 'Distances others see are worked out from your location; '
+                 || 'the coordinates below are rounded to about a mile, which '
+                 || 'is how they were stored.',
+    'profile', (
+      select to_jsonb(p) - 'location' ||
+             jsonb_build_object('approximate_location',
+               case when p.location is null then null
+                    else jsonb_build_object(
+                      'latitude',  round(st_y(p.location::geometry)::numeric, 2),
+                      'longitude', round(st_x(p.location::geometry)::numeric, 2)) end)
+      from profiles p where p.id = me),
+    'posts',    coalesce((select jsonb_agg(to_jsonb(x)) from (
+                  select id, body, tag, fields, media_path, created_at,
+                         like_count, comment_count
+                  from posts where author_id = me order by created_at) x), '[]'::jsonb),
+    'comments', coalesce((select jsonb_agg(to_jsonb(x)) from (
+                  select id, post_id, body, created_at
+                  from post_comments where author_id = me order by created_at) x), '[]'::jsonb),
+    'messages_you_sent', coalesce((select jsonb_agg(to_jsonb(x)) from (
+                  select id, conversation_id, body, created_at
+                  from messages where sender_id = me order by created_at) x), '[]'::jsonb),
+    'recordings', coalesce((select jsonb_agg(to_jsonb(x)) from (
+                  select id, title, audio_path, created_at
+                  from tracks where owner_id = me order by created_at) x), '[]'::jsonb),
+    'bands',    coalesce((select jsonb_agg(to_jsonb(x)) from (
+                  select b.id, b.name, b.city, m.role_label, m.is_admin, m.joined_at
+                  from band_members m join bands b on b.id = m.band_id
+                  where m.user_id = me order by m.joined_at) x), '[]'::jsonb),
+    'connections', coalesce((select jsonb_agg(to_jsonb(x)) from (
+                  select c.id, c.created_at,
+                         case when c.a_id = me then c.b_id else c.a_id end as with_user
+                  from connections c where c.a_id = me or c.b_id = me
+                  order by c.created_at) x), '[]'::jsonb),
+    'people_you_passed_or_liked', coalesce((select jsonb_agg(to_jsonb(x)) from (
+                  select to_id, direction, created_at
+                  from swipes where from_id = me order by created_at) x), '[]'::jsonb),
+    'people_you_blocked', coalesce((select jsonb_agg(to_jsonb(x)) from (
+                  select blocked_id, created_at
+                  from blocks where blocker_id = me order by created_at) x), '[]'::jsonb)
+  ) into out;
+
+  return out;
+end $$;
+
+comment on function export_my_data is
+  'Everything Jammy holds about the caller, and nobody else. Takes no argument on purpose.';
+
+-- ------------------------------------------------------------
+--  3. Deleting the account
+--
+--  Most of this happens by itself: nearly everything that points
+--  at a profile is ON DELETE CASCADE, so removing the profile row
+--  takes the posts, comments, likes, swipes, connections, band
+--  memberships, tracks and device tokens with it.
+--
+--  Three things are handled by hand.
+--
+--  Messages stay. The column is ON DELETE SET NULL, which is what
+--  the privacy policy describes: a message you sent remains in the
+--  other person's conversation the way a sent text does, with no
+--  profile behind it any more. This is deliberate, not an
+--  oversight — the alternative is quietly editing somebody else's
+--  conversation after they have read it.
+--
+--  Reports made ABOUT you cascade, which would let anyone delete
+--  the record of their own behaviour and sign up again clean. The
+--  policy says safety records are kept for twelve months, so they
+--  are detached from the profile and kept, with no name attached.
+--
+--  The auth account itself goes last, so that nothing is half
+--  deleted if it fails.
+-- ------------------------------------------------------------
+create or replace function delete_my_account(confirm text)
+returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+  me       uuid := (select auth.uid());
+  handle_was text;
+  kept     int := 0;
+  auth_gone boolean := false;
+begin
+  if me is null then raise exception 'not signed in'; end if;
+
+  -- Deleting is not undoable, so it is not a thing you can do by
+  -- tapping twice in the wrong place.
+  if lower(coalesce(btrim(confirm),'')) <> 'delete' then
+    raise exception 'To delete your account, type the word delete.';
+  end if;
+
+  select handle into handle_was from profiles where id = me;
+
+  -- safety records about this person outlive the account
+  update reports set target_user = null
+   where target_user = me;
+  get diagnostics kept = row_count;
+
+  update reports set reporter_id = null where reporter_id = me;
+
+  -- the profile, and everything that hangs off it
+  delete from profiles where id = me;
+
+  -- and the sign-in itself. If this database cannot reach the auth
+  -- table, the account's data is already gone and we say so rather
+  -- than pretending the whole thing worked.
+  begin
+    delete from auth.users where id = me;
+    auth_gone := true;
+  exception when others then
+    auth_gone := false;
+  end;
+
+  return jsonb_build_object(
+    'deleted', true,
+    'handle', handle_was,
+    'sign_in_removed', auth_gone,
+    'safety_records_kept', kept,
+    'note', 'Messages you sent stay in the other person''s conversation, '
+         || 'with no profile attached, as the privacy policy describes.');
+end $$;
+
+comment on function delete_my_account is
+  'Permanent. Requires the word "delete". Keeps sent messages and safety records, per the privacy policy.';
+
+-- ------------------------------------------------------------
+--  4. Proof
+-- ------------------------------------------------------------
+do $$
+declare n int;
+begin
+  select count(*) into n from pg_proc p
+  join pg_namespace ns on ns.oid = p.pronamespace
+  where ns.nspname = 'public'
+    and p.proname in ('delete_my_account','export_my_data');
+  if n <> 2 then
+    raise exception 'Jammy: expected 2 account functions, found %', n;
+  end if;
+
+  if exists (
+    select 1 from pg_constraint
+    where conrelid = 'ad_requests'::regclass and contype = 'f'
+      and confrelid = 'profiles'::regclass and confdeltype = 'a') then
+    raise exception 'Jammy: a reviewed ad request would still block deleting an account';
+  end if;
+
+  raise notice 'Jammy: an account can be exported and deleted, which Apple requires.';
+end $$;
+
+
+-- ############################################################
+-- ##  21_chart.sql
+-- ############################################################
+
+-- ============================================================
+--  JAMMY — 21_chart.sql
+--  THE WEEKLY CHART, FROM REAL PLAYS. Run after 01–20.
+--
+--  WHY THIS EXISTS
+--  The radio screen was invented: made-up tracks, made-up play
+--  counts, and a banner reading "2,140 LISTENING" to a real
+--  signed-in person when the true number was nobody.
+--
+--  weekly_chart_v has been here since 03_scale.sql, counting real
+--  plays. Nothing called it. Same as the feed, same as the gigs.
+--
+--  This adds the one call the screen needs — the track, who made
+--  it, how it has moved since last week — and an honest answer
+--  for how many people are actually listening.
+--
+--  Safe to run twice.
+-- ============================================================
+
+-- ------------------------------------------------------------
+--  1. The chart, in one call
+--
+--  A view cannot be joined through PostgREST the way a table can,
+--  so the app would have needed a query per row to find out who
+--  made each track. This answers the whole screen at once.
+--
+--  SECURITY DEFINER because it reads play_daily, which is closed
+--  to the app on purpose — nobody should be able to pull the raw
+--  play table, only the chart built from it.
+-- ------------------------------------------------------------
+create or replace function weekly_chart(limit_n int default 10)
+returns table (
+  track_id uuid, title text, key text, bpm int, audio_path text,
+  owner_id uuid, artist_name text, artist_handle text, artist_photo text,
+  plays bigint, listeners int,
+  last_week_rank int, rank int, is_new boolean, move int, mine boolean
+)
+language sql stable security definer set search_path = public, extensions as $$
+  with this_week as (
+    select c.track_id, c.title, c.key, c.bpm, c.plays, c.listeners, c.owner_id,
+           row_number() over (order by c.score desc)::int as rank
+    from weekly_chart_v c
+  ),
+  last_week as (
+    -- the column is `position`, and the table is keyed by week_start
+    select h.track_id, min(h.position)::int as was
+    from chart_history h
+    where h.week_start = (
+      select max(week_start) from chart_history
+      where week_start < date_trunc('week', now())::date)
+    group by h.track_id
+  )
+  select w.track_id, w.title, w.key, w.bpm, t.audio_path,
+         w.owner_id, p.display_name, p.handle, p.photo_path,
+         w.plays, w.listeners,
+         l.was,
+         w.rank,
+         (l.was is null),
+         case when l.was is null then 0 else (l.was - w.rank) end,
+         (w.owner_id = (select auth.uid()))
+  from this_week w
+  join tracks t on t.id = w.track_id
+  join profiles p on p.id = w.owner_id
+  left join last_week l on l.track_id = w.track_id
+  where not p.is_banned
+    and not blocked_between(w.owner_id, (select auth.uid()))
+  order by w.rank
+  limit least(greatest(limit_n, 1), 50);
+$$;
+
+-- ------------------------------------------------------------
+--  2. How many people are actually listening
+--
+--  The screen said 2,140. It should say what is true, even when
+--  what is true is two. An honest small number is a reason to
+--  tell your friends; an invented large one is a reason to stop
+--  believing the rest of the screen.
+--
+--  "Listening" means someone who played something in the last
+--  fifteen minutes. Counted distinctly, so one person on repeat
+--  is one person.
+-- ------------------------------------------------------------
+create or replace function listening_now()
+returns int
+language sql stable security definer set search_path = public, extensions as $$
+  select count(distinct coalesce(user_id::text, 'anon:' || id::text))::int
+  from plays
+  where created_at > now() - interval '15 minutes';
+$$;
+
+-- ------------------------------------------------------------
+--  3. When the chart resets
+--
+--  The screen says "Resets Sunday". That should come from the
+--  same place the chart does rather than being typed into the
+--  page and quietly drifting out of step with the job that
+--  actually rolls it over.
+-- ------------------------------------------------------------
+create or replace function chart_resets_at()
+returns timestamptz
+language sql stable as $$
+  select date_trunc('week', now()) + interval '7 days';
+$$;
+
+-- ------------------------------------------------------------
+--  4. Your own tracks, so a profile can list them
+-- ------------------------------------------------------------
+create or replace function tracks_by(who uuid)
+returns table (
+  id uuid, title text, key text, bpm int, audio_path text,
+  is_public boolean, created_at timestamptz, plays bigint
+)
+language sql stable security definer set search_path = public, extensions as $$
+  select t.id, t.title, t.key, t.bpm, t.audio_path, t.is_public, t.created_at,
+         coalesce((select sum(d.plays) from play_daily d where d.track_id = t.id), 0)::bigint
+  from tracks t
+  join profiles p on p.id = t.owner_id
+  where t.owner_id = who
+    and (t.is_public or t.owner_id = (select auth.uid()))
+    and not p.is_banned
+    and not blocked_between(who, (select auth.uid()))
+  order by t.created_at desc;
+$$;
+
+-- ------------------------------------------------------------
+--  5. Proof
+-- ------------------------------------------------------------
+do $$
+declare n int;
+begin
+  select count(*) into n from pg_proc p
+  join pg_namespace ns on ns.oid = p.pronamespace
+  where ns.nspname = 'public'
+    and p.proname in ('weekly_chart','listening_now','chart_resets_at','tracks_by');
+  if n <> 4 then
+    raise exception 'Jammy: expected 4 chart functions, found %', n;
+  end if;
+
+  -- an empty chart is a correct chart when nobody has uploaded anything
+  perform weekly_chart(10);
+  if listening_now() < 0 then
+    raise exception 'Jammy: listening_now returned a negative number';
+  end if;
+
+  raise notice 'Jammy: the chart counts real plays, and says how many people are really listening.';
+end $$;
+
+
