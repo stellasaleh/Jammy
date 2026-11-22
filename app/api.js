@@ -575,9 +575,13 @@
 
     removeTrack: (id) => call(() => sb.from("tracks").delete().eq("id", id)),
 
-    /* only count a play at 30 seconds or more, or the chart is trivially gamed */
+    /* Fifteen seconds counts as a play. The real rule is the roll_up_play
+       trigger in the database — this only avoids a round trip that the
+       server would throw away, so the two numbers must agree. A play
+       counts once per person per track per day however often it is
+       played, which is what stops the chart being climbed by tapping. */
     logPlay: (trackId, seconds, source) =>
-      seconds < 30
+      seconds < 15
         ? Promise.resolve(ok(null))
         : call(async () => {
             const me = await uid();

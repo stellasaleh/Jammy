@@ -38,6 +38,17 @@ const rows = {
   /* What band_schedule() hands a NON-MEMBER: the public gig, with no
      address and no note, and no sign of the practice at all. The real
      function decides this; the fake must not be more generous than it. */
+  chart: [1,2,3,4,5].map(n=>({track_id:"t"+n,title:"Track "+n,key:"Am",bpm:100,
+            audio_path:"u5/t"+n+".mp3",owner_id:"u"+n,artist_name:"Artist "+n,
+            artist_handle:"a"+n,artist_photo:null,plays:20-n,listeners:10-n,
+            last_week_rank:n+1,rank:n,is_new:false,move:1,mine:false})),
+  rising: [{track_id:"tr9",title:"First Take",key:"C",bpm:92,
+            audio_path:"u9/tracks/first.mp3",duration_ms:95000,plays:0,
+            artist_id:"u9",artist_name:"Bo Kerrigan",artist_handle:"bo",
+            artist_photo:null,artist_city:"Boston",
+            artist_bio:"Just moved here, looking for people.",
+            artist_instruments:["Drums"],artist_genres:["Indie"],
+            shared_genres:["Indie"],miles:2.4,uploaded_days_ago:0}],
   myTracks: [{id:"t1",title:"Kitchen Demo 2",key:"A minor",bpm:104,
               audio_path:"u1/tracks/abc.mp3",is_public:true,
               created_at:new Date().toISOString(),plays:0}],
@@ -48,6 +59,17 @@ const rows = {
           like_count:3,comment_count:1,author_name:"Rue Delacroix",
           author_handle:"rue",author_city:"Boston",author_photo:null,
           liked_by_me:false,mine:false}],
+  chart: [1,2,3,4,5].map(n=>({track_id:"t"+n,title:"Track "+n,key:"Am",bpm:100,
+            audio_path:"u5/t"+n+".mp3",owner_id:"u"+n,artist_name:"Artist "+n,
+            artist_handle:"a"+n,artist_photo:null,plays:20-n,listeners:10-n,
+            last_week_rank:n+1,rank:n,is_new:false,move:1,mine:false})),
+  rising: [{track_id:"tr9",title:"First Take",key:"C",bpm:92,
+            audio_path:"u9/tracks/first.mp3",duration_ms:95000,plays:0,
+            artist_id:"u9",artist_name:"Bo Kerrigan",artist_handle:"bo",
+            artist_photo:null,artist_city:"Boston",
+            artist_bio:"Just moved here, looking for people.",
+            artist_instruments:["Drums"],artist_genres:["Indie"],
+            shared_genres:["Indie"],miles:2.4,uploaded_days_ago:0}],
   myTracks: [{id:"t1",title:"Kitchen Demo 2",key:"A minor",bpm:104,
               audio_path:"u1/tracks/abc.mp3",is_public:true,
               created_at:new Date().toISOString(),plays:0}],
@@ -85,7 +107,13 @@ window.__calls = [];
 const okr = (d) => Promise.resolve({ data: d, error: null });
   window.__rows = rows;
 window.JammyAPI = {
-  sb: { rpc: (n,a) => { window.__calls.push("rpc:"+n); return okr([]); },
+  sb: { rpc: (n,a) => { window.__calls.push("rpc:"+n);
+          if (n === "rising_track")  return okr(rows.rising);
+          if (n === "weekly_chart")  return okr(rows.chart);
+          if (n === "listening_now") return okr(3);
+          if (n === "my_posts" || n === "posts_by") return okr([]);
+          if (n === "tracks_by")     return okr(rows.myTracks);
+          return okr([]); },
         functions: { invoke: () => okr(null) } },
   auth: { session: () => okr({ session: { access_token: "x" } }),
           signOut: () => okr({}), onChange: () => {},
@@ -163,11 +191,31 @@ window.JammyAPI = {
 const PRIME = `try { localStorage.setItem("jammy:v1", JSON.stringify({ onboarded: true, firstRun: false })); } catch (e) {}`;
 
 (async () => {
+  /* 1 second of 8kHz mono silence: a 44-byte RIFF header and 8000 zeroes. */
+  const SILENT_WAV = (() => {
+    const data = 8000, b = Buffer.alloc(44 + data);
+    b.write("RIFF", 0); b.writeUInt32LE(36 + data, 4); b.write("WAVE", 8);
+    b.write("fmt ", 12); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20);
+    b.writeUInt16LE(1, 22); b.writeUInt32LE(8000, 24); b.writeUInt32LE(8000, 28);
+    b.writeUInt16LE(1, 32); b.writeUInt16LE(8, 34);
+    b.write("data", 36); b.writeUInt32LE(data, 40);
+    b.fill(128, 44);                       // 128 is silence for 8-bit PCM
+    return b;
+  })();
+
   const srv = http.createServer((req, res) => {
     const u = req.url.split("?")[0];
     if (u === "/api.js") {               // serve the fake in place of the real one
       res.writeHead(200, { "Content-Type": "text/javascript" });
       res.end(FAKE_API);
+      return;
+    }
+    /* A real, if silent, sound file for the uploaded-track paths. Serving a
+       404 here made the player stop the moment it started, which looked
+       like a bug in the player and was a gap in this server. */
+    if (u.startsWith("/_t/") || u.startsWith("/_m/")) {
+      res.writeHead(200, { "Content-Type": "audio/wav" });
+      res.end(SILENT_WAV);
       return;
     }
     const f = path.join(ROOT, u === "/" ? "index.html" : u);
@@ -574,6 +622,38 @@ const PRIME = `try { localStorage.setItem("jammy:v1", JSON.stringify({ onboarded
      "there is no call function left");
   ok(!(await page.$("#ch-call")), "no call button in a conversation");
   ok(!(await page.$("#call")), "and no call screen in the page");
+
+  console.log("\n-- the top three, and somebody new --");
+  await page.evaluate(() => go("radio")); await page.waitForTimeout(700);
+  {
+    const pods = await page.$$("#radio .podrow");
+    ok(pods.length === 3, `the top three are set apart (${pods.length} of them)`);
+    ok(/1st/.test(await page.textContent("#radio .podrow.p1")), "and the first says so");
+    ok((await page.$$("#radio .lbrow")).length === 2, "with the rest as an ordinary list");
+
+    const card = await page.$("#radio .newartist");
+    ok(!!card, "and there is somebody new to discover");
+    const txt = await page.textContent("#radio .newartist");
+    ok(/Bo Kerrigan/.test(txt), "with their name");
+    ok(/First Take/.test(txt), "and their track");
+    ok(/Just moved here/.test(txt), "and something about them");
+
+    /* a real click, because a card at the bottom of a scrolling screen is
+       exactly where a button ends up under something else */
+    clear();
+    if (await clickIt("[data-naplay]", "their track can be played")) {
+      pass++; console.log("  ✓ their track can be played");
+      await page.waitForTimeout(300);
+      ok(await page.evaluate(() => nowPlaying === "t:tr9"), "and it starts");
+      await page.evaluate(() => stopAudio());
+    }
+    if (await clickIt("[data-naprofile]", "and their profile can be opened")) {
+      pass++; console.log("  ✓ and their profile can be opened");
+      await page.waitForTimeout(300);
+      ok(/Bo Kerrigan/.test(await page.textContent("#sheetbody")), "and it is them");
+      await page.evaluate(() => document.querySelector("#sheet").classList.remove("on"));
+    }
+  }
 
   console.log("\n-- the radio plays the recording, not a synthesiser --");
   await page.evaluate(() => go("you")); await page.waitForTimeout(500);

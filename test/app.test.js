@@ -20,6 +20,7 @@ function makeAPI(opts = {}) {
             /* a few RPCs the app calls directly; the rest answer empty */
             if (n === "weekly_chart")   return { data: opts.chart || [], error: null };
             if (n === "listening_now")  return { data: opts.listeners ?? 0, error: null };
+            if (n === "rising_track")   return { data: opts.rising || [], error: null };
             if (n === "add_post")       return opts.addPostFails ? err(opts.addPostFails) : { data: "newpost", error: null };
             if (n === "my_posts" || n === "posts_by") return { data: opts.myPosts || [], error: null };
             return { data: [], error: null };
@@ -1230,6 +1231,142 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const html = fs.readFileSync(APP, "utf8");
     ok(!/Round trip <b>/.test(html), "and the invented round-trip readout is gone with it");
     ok(!/cl-grid|cl-video|startCam/.test(html), "with none of the call screen left behind");
+  }
+
+  /* ----------------------------------------------------------
+     52. A PLAY COUNTS AT FIFTEEN SECONDS, not thirty.
+     ---------------------------------------------------------- */
+  console.log("\n52. FIFTEEN SECONDS counts as a play");
+  {
+    const TRACKS = [{ id: "t1", title: "Kitchen Demo 2", key: "A minor", bpm: 104,
+                      audio_path: "u1/tracks/abc.mp3", plays: 0 }];
+    const { w, api } = await boot(true, signedIn({ myTracks: TRACKS }));
+    await wait(260);
+    w.__peek('play(S.me.tracks[0], {id:"u1", name:"Stella Saleh"})');
+    await wait(120);
+
+    ok(w.__peek("PLAY_COUNTS_AT") === 15, "the app's threshold is fifteen seconds");
+
+    w.__peek("realPlayedFor = 14; reportPlay()");
+    ok(!api._log.some((l) => l.startsWith("logPlay")), "fourteen seconds is not a play");
+
+    w.__peek("realPlayedFor = 15; reportPlay()");
+    await wait(140);
+    ok(api._log.some((l) => l.startsWith("logPlay:t1")), "fifteen is");
+  }
+
+  console.log("\n52b. AND THE APP AND THE SERVER AGREE ON THE NUMBER");
+  {
+    /* Two copies of one rule is how they drift apart. The database's
+       roll_up_play trigger is the real one; these must match it. */
+    const appSrc = fs.readFileSync(APP, "utf8");
+    const apiSrc = fs.readFileSync(APP.replace(/index\.html$/, "api.js"), "utf8");
+    const sqlDir = APP.replace(/www\/index\.html$/, "backend/");
+    const sql = fs.readdirSync(sqlDir).filter(f => /^\d\d_.*\.sql$/.test(f))
+                  .map(f => fs.readFileSync(sqlDir + f, "utf8")).join("\n");
+
+    const fromSql = [...sql.matchAll(/new\.seconds < (\d+)/g)].map(m => +m[1]).pop();
+    const fromApi = +(apiSrc.match(/seconds < (\d+)/) || [])[1];
+    const fromApp = +(appSrc.match(/PLAY_COUNTS_AT\s*=\s*(\d+)/) || [])[1];
+
+    ok(fromSql === 15, `the database counts a play at ${fromSql}s`);
+    ok(fromApi === fromSql, `and api.js agrees (${fromApi}s)`);
+    ok(fromApp === fromSql, `and the app agrees (${fromApp}s)`);
+  }
+
+  /* ----------------------------------------------------------
+     53. THE TOP THREE, and somebody new.
+     ---------------------------------------------------------- */
+  const BIGCHART = [1,2,3,4,5].map(n => ({
+    track_id: "t" + n, title: "Track " + n, key: "Am", bpm: 100,
+    audio_path: "u5/t" + n + ".mp3", owner_id: "u" + n,
+    artist_name: "Artist " + n, artist_handle: "a" + n, artist_photo: null,
+    plays: 20 - n, listeners: 10 - n, last_week_rank: n + 1, rank: n,
+    is_new: false, move: 1, mine: false,
+  }));
+
+  console.log("\n53. THE TOP THREE are set apart from the rest of the chart");
+  {
+    const { w } = await boot(true, signedIn({ chart: BIGCHART, listeners: 3 }));
+    await wait(240);
+    w.__peek('go("radio")'); await wait(220);
+
+    const radio = w.document.querySelector("#radio");
+    ok(radio.querySelectorAll(".podrow").length === 3, "three of them, on their own");
+    ok(!!radio.querySelector(".podrow.p1"), "first is marked as first");
+    ok(/1st/.test(radio.querySelector(".podrow.p1").textContent), "and says so in words");
+    ok(/Track 1/.test(radio.querySelector(".podrow.p1").textContent), "with the right track");
+    ok(radio.querySelectorAll(".lbrow").length === 2, "and the rest are an ordinary list");
+    ok(/4 to 5/.test(radio.textContent), "numbered on from four");
+  }
+
+  console.log("\n53b. A SHORT CHART does not pretend to have three");
+  {
+    const { w } = await boot(true, signedIn({ chart: BIGCHART.slice(0, 2), listeners: 1 }));
+    await wait(240);
+    w.__peek('go("radio")'); await wait(220);
+    const radio = w.document.querySelector("#radio");
+    ok(radio.querySelectorAll(".podrow").length === 2, "two tracks make a top two");
+    ok(/Top 2 this week/.test(radio.textContent), "and it says top 2, not top 3");
+    ok(radio.querySelectorAll(".lbrow").length === 0, "with no empty list under it");
+  }
+
+  const RISING = [{
+    track_id: "tr9", title: "First Take", key: "C", bpm: 92,
+    audio_path: "u9/tracks/first.mp3", duration_ms: 95000, plays: 0,
+    artist_id: "u9", artist_name: "Bo Kerrigan", artist_handle: "bo",
+    artist_photo: null, artist_city: "Boston", artist_bio: "Just moved here, looking for people.",
+    artist_instruments: ["Drums"], artist_genres: ["Indie"],
+    shared_genres: ["Indie"], miles: 2.4, uploaded_days_ago: 0,
+  }];
+
+  console.log("\n54. DISCOVER A NEW ARTIST shows one up-and-coming track and who made it");
+  {
+    const { w, api } = await boot(true, signedIn({ chart: BIGCHART, rising: RISING }));
+    await wait(260);
+    w.__peek('go("radio")'); await wait(240);
+
+    ok(api._log.includes("rpc:rising_track"), "the radio asks for somebody new");
+    const card = w.document.querySelector(".newartist");
+    ok(!!card, "and shows them");
+    const txt = card.textContent;
+    ok(/Bo Kerrigan/.test(txt), "with their name");
+    ok(/First Take/.test(txt), "the track");
+    ok(/Boston/.test(txt), "where they are");
+    ok(/Just moved here/.test(txt), "and something about them");
+    ok(/Indie/.test(txt), "and what you both play");
+    ok(/added today/.test(txt), "and how new it is");
+    ok(/Not played yet/.test(w.document.querySelector("#radio").textContent),
+       "and says plainly that nobody has played it");
+  }
+
+  console.log("\n54b. AND BOTH ITS BUTTONS DO SOMETHING");
+  {
+    const { w } = await boot(true, signedIn({ chart: BIGCHART, rising: RISING }));
+    await wait(260);
+    w.__peek('go("radio")'); await wait(240);
+
+    w.document.querySelector("[data-naplay]").click();
+    await wait(200);
+    ok(w.__peek("nowPlaying") === "t:tr9" && w.__peek("realTrackId") === "tr9",
+       "play starts their track");
+    ok(w.__peek('document.querySelector("[data-naplay]").dataset.play') === w.__peek("nowPlaying"),
+       "and the button knows it, so its icon can flip to pause");
+
+    w.document.querySelector("[data-naprofile]").click();
+    await wait(200);
+    ok(/Bo Kerrigan/.test(w.document.querySelector("#sheetbody").textContent),
+       "and the other opens their profile");
+  }
+
+  console.log("\n54c. WITH NOBODY NEW, it shows nothing rather than an empty box");
+  {
+    const { w } = await boot(true, signedIn({ chart: BIGCHART, rising: [] }));
+    await wait(300);
+    w.__peek('go("radio")'); await wait(240);
+    ok(!w.document.querySelector(".newartist"), "no card at all");
+    ok(!/Discover a new artist/.test(w.document.querySelector("#radio").textContent),
+       "and no heading for it either");
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

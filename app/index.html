@@ -650,6 +650,46 @@ nav .nb{position:absolute;top:4px;right:calc(50% - 20px);background:var(--mag);c
 .nowplaying .bot .t{flex:1;min-width:0}
 .nowplaying .bot h3{font-size:19px;line-height:1.15}
 .nowplaying .bot span{font-size:13px;color:var(--dim)}
+/* The top three, set apart from the rest of the chart. */
+.podium{padding:2px 16px 0;display:flex;flex-direction:column;gap:8px}
+.podrow{display:flex;align-items:center;gap:11px;width:100%;text-align:left;
+  padding:11px 12px;border-radius:15px;border:1px solid var(--line);
+  background:var(--surface);color:inherit;font:inherit}
+.podrow.p1{border-color:rgba(245,130,32,.45);background:linear-gradient(100deg,rgba(245,130,32,.14),rgba(229,40,92,.08))}
+.podrow.p2{border-color:rgba(229,40,92,.3)}
+.podrow.p3{border-color:rgba(229,40,92,.2)}
+.podrow.me{box-shadow:inset 0 0 0 1px var(--mag)}
+.podrow .place{flex:none;width:30px;font-family:"Bricolage Grotesque";font-weight:800;
+  font-size:13px;letter-spacing:-.02em;color:var(--dim)}
+.podrow.p1 .place{color:var(--amber)}
+.podrow.p2 .place,.podrow.p3 .place{color:var(--mag)}
+.podrow .cov{width:52px;height:52px;border-radius:13px;overflow:hidden;flex:none}
+.podrow.p1 .cov{width:62px;height:62px}
+.podrow .cov svg{width:100%;height:100%}
+.podrow .t{flex:1;min-width:0}
+.podrow .t b{display:block;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.podrow .t span{display:block;font-size:12.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.podrow .t .n{font-size:11.5px;opacity:.8}
+.podrow .pb{flex:none;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;
+  background:var(--mag)}
+.podrow .pb svg{width:15px;height:15px;fill:#fff}
+
+/* Discover a new artist. */
+.newartist{margin:2px 16px 0;padding:14px;border-radius:17px;
+  border:1px solid var(--line);background:var(--surface)}
+.na-top{display:flex;align-items:center;gap:11px}
+.na-top .av{width:52px;height:52px;border-radius:50%;overflow:hidden;flex:none}
+.na-who{flex:1;min-width:0}
+.na-who b{display:block;font-size:15.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.na-who span{font-size:12.5px;color:var(--dim)}
+.na-track{margin-top:11px;padding-top:11px;border-top:1px solid var(--line)}
+.na-track b{display:block;font-size:14.5px}
+.na-track span{font-size:12px;color:var(--dim)}
+.na-bio{margin:9px 0 0;font-size:13px;line-height:1.55;color:var(--dim)}
+.na-tags{margin-top:10px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.na-tags span{font-size:11px;padding:3px 9px;border-radius:999px;
+  background:rgba(229,40,92,.14);color:var(--mag);font-weight:600}
+.na-tags em{font-size:11.5px;color:var(--dim);font-style:normal}
 .lbrow{display:flex;align-items:center;gap:12px;padding:10px 16px;width:100%;text-align:left;border-bottom:1px solid var(--line)}
 .lbrow .rank{width:26px;text-align:center;font-family:"Bricolage Grotesque";font-weight:800;font-size:18px;color:var(--dim)}
 .lbrow.top1 .rank{color:var(--amber)}.lbrow.top2 .rank,.lbrow.top3 .rank{color:var(--mag)}
@@ -1900,6 +1940,19 @@ function stopAudio(){
    their name on it. So a track with a file plays the file. */
 let realAudio=null, realPlayedFor=0, realTimer=null, realTrackId=null;
 
+/* Written once. The database's roll_up_play trigger holds the same number
+   and is the one that decides; this only avoids reporting a play the
+   server would discard. Change one and you must change the other. */
+const PLAY_COUNTS_AT=15;
+
+/* What identifies the thing currently playing. Every play button carries
+   this in data-play, and play() sets nowPlaying to it, so the two have to
+   be worked out the same way — otherwise the button's icon never flips to
+   pause. A real track has an id; the invented demo ones only have a title. */
+function trackUid(track,artist){
+  return (track&&track.id)?("t:"+track.id):((artist&&artist.id||"me")+":"+(track&&track.title||""));
+}
+
 function stopRealAudio(){
   if(realTimer){clearInterval(realTimer);realTimer=null}
   if(realAudio){try{realAudio.pause()}catch(e){}realAudio=null}
@@ -1923,10 +1976,11 @@ function playReal(track,artist,uid){
   realAudio.onended=()=>{reportPlay();stopAudio()};
   realAudio.onerror=()=>{toast("Couldn't play that recording");stopAudio()};
 
-  /* A play counts at thirty seconds, which is the server's rule too — a
-     chart you can climb by tapping play is not a chart. */
+  /* A play counts at fifteen seconds, which is the server's rule too. What
+     stops the chart being climbed by tapping play is not the length but the
+     dedupe: one play per person per track per day, however often. */
   realPlayedFor=0;
-  realTimer=setInterval(()=>{realPlayedFor++;if(realPlayedFor===30)reportPlay()},1000);
+  realTimer=setInterval(()=>{realPlayedFor++;if(realPlayedFor===PLAY_COUNTS_AT)reportPlay()},1000);
 
   /* play() returns a promise in current browsers and nothing at all in
      older Safari, so it cannot be assumed to have .catch */
@@ -1938,7 +1992,7 @@ function playReal(track,artist,uid){
 let reportedPlays={};
 function reportPlay(){
   if(!LIVE||!realTrackId)return;
-  if(realPlayedFor<30)return;
+  if(realPlayedFor<PLAY_COUNTS_AT)return;
   if(reportedPlays[realTrackId])return;      /* once per listen, not per second */
   reportedPlays[realTrackId]=true;
   const id=realTrackId,secs=realPlayedFor;
@@ -1946,7 +2000,7 @@ function reportPlay(){
 }
 
 function play(track,artist){
-  const uid=(artist.id||"me")+":"+track.title;
+  const uid=trackUid(track,artist);
   if(nowPlaying===uid){stopAudio();return}
 
   /* a real file beats a synthesised stand-in, always */
@@ -3320,7 +3374,7 @@ async function loadChart(){
   chartLoading=false;
   if(c.error){LIVECHART=[];renderRadio();return}
   LIVECHART=(c.data||[]).map(r=>({
-    uid:r.track_id,
+    uid:"t:"+r.track_id,
     track:{id:r.track_id,title:r.title,key:r.key||"",bpm:r.bpm||0,path:r.audio_path},
     artist:{id:r.owner_id,name:r.artist_name||r.artist_handle||"Someone",photo_path:r.artist_photo},
     plays:Number(r.plays||0), listeners:r.listeners||0,
@@ -3377,27 +3431,138 @@ function renderRadio(){
     <div class="bot"><div class="t"><h3>${esc(top.track.title)}</h3><span>${esc(top.artist.name)} · ${esc(top.track.key)} · ${top.track.bpm} bpm</span></div>
       <button class="pbtn" style="width:46px;height:46px" data-play="${esc(top.uid)}" data-rplay="0">${nowPlaying===top.uid?ICON_PAUSE:ICON_PLAY}</button></div>`;
   r.appendChild(np);
-  const head=el("div","sechead",`<h2>This week's top 10</h2><span class="more">Resets Sunday</span>`);
-  r.appendChild(head);
   const pills=el("div","pills");
   [["week","Most played"],["new","New this week"],["near","Near you"]].forEach(([k,label])=>{
     const b=el("button","pill"+(lbTab===k?" on":""),label);
     b.onclick=()=>{lbTab=k;renderRadio()};pills.appendChild(b);
   });
   r.appendChild(pills);
-  const list=el("div");list.style.marginTop="8px";
-  chart.forEach((row,i)=>{
-    const b=el("button","lbrow"+(i<3?" top"+(i+1):"")+(row.me?" me":""));
-    const mv=row.isNew?`<span class="mv new">NEW</span>`:row.move>0?`<span class="mv up">▲ ${row.move}</span>`:row.move<0?`<span class="mv dn">▼ ${-row.move}</span>`:`<span class="mv dn">—</span>`;
-    b.innerHTML=`<span class="rank">${i+1}</span><div class="cov">${art(hash(row.uid),"",{k:"lb"})}</div>
-      <div class="t"><b>${esc(row.track.title)}</b><span>${esc(row.artist.name)} · ${nfmt(row.plays)} plays</span></div>${mv}`;
+
+  const movement=row=>row.isNew?`<span class="mv new">NEW</span>`
+    :row.move>0?`<span class="mv up">▲ ${row.move}</span>`
+    :row.move<0?`<span class="mv dn">▼ ${-row.move}</span>`
+    :`<span class="mv dn">—</span>`;
+
+  /* The top three, set apart. They used to be three ordinary rows with a
+     differently coloured numeral, which is not something anyone notices. */
+  const podium=chart.slice(0,3), rest=chart.slice(3);
+  const PLACE=["1st","2nd","3rd"];
+
+  r.appendChild(el("div","sechead",
+    `<h2>${podium.length===1?"Top this week":"Top "+podium.length+" this week"}</h2>
+     <span class="more">Resets Sunday</span>`));
+
+  const pod=el("div","podium");
+  podium.forEach((row,i)=>{
+    const b=el("button","podrow p"+(i+1)+(row.me?" me":""));
+    b.innerHTML=`<span class="place">${PLACE[i]}</span>
+      <div class="cov">${art(hash(row.uid),"",{k:"lb"})}</div>
+      <div class="t"><b>${esc(row.track.title)}</b>
+        <span>${esc(row.artist.name)}</span>
+        <span class="n">${nfmt(row.plays)} ${row.plays===1?"play":"plays"}${row.listeners?" · "+nfmt(row.listeners)+(row.listeners===1?" listener":" listeners"):""}</span></div>
+      ${movement(row)}
+      <span class="pb">${nowPlaying===row.uid?ICON_PAUSE:ICON_PLAY}</span>`;
     b.onclick=()=>play(row.track,row.artist);
-    list.appendChild(b);
+    pod.appendChild(b);
   });
-  r.appendChild(list);
-  const note=el("div","empty",`<p style="font-size:13px">Plays counted from Jammy Radio and profile listens. Every play you make here moves the chart.</p>`);
+  r.appendChild(pod);
+
+  if(rest.length){
+    r.appendChild(el("div","sechead",
+      `<h2>${rest.length===1?"Fourth":"4 to "+chart.length}</h2>`));
+    const list=el("div");
+    rest.forEach((row,i)=>{
+      const b=el("button","lbrow"+(row.me?" me":""));
+      b.innerHTML=`<span class="rank">${i+4}</span><div class="cov">${art(hash(row.uid),"",{k:"lb"})}</div>
+        <div class="t"><b>${esc(row.track.title)}</b><span>${esc(row.artist.name)} · ${nfmt(row.plays)} plays</span></div>${movement(row)}`;
+      b.onclick=()=>play(row.track,row.artist);
+      list.appendChild(b);
+    });
+    r.appendChild(list);
+  }
+
+  renderNewArtist(r);
+
+  const note=el("div","empty",`<p style="font-size:13px">A play counts after fifteen seconds, once per person per track per day. Every listen you give someone moves them up.</p>`);
   r.appendChild(note);
   np.querySelector("[data-rplay]").onclick=()=>play(top.track,top.artist);
+}
+
+/* ---------- discover a new artist ----------
+   The chart shows what is already popular, which is the one thing a new
+   arrival cannot be. This is the other half: one up-and-coming track and
+   the person behind it, chosen for having few plays and being recent
+   rather than for being good, because nobody can measure that. */
+let RISING=null, risingLoading=false;
+
+async function loadRising(){
+  if(!LIVE||risingLoading)return;
+  risingLoading=true;
+  const r=await DB.risingTrack();
+  risingLoading=false;
+  if(r.error){RISING=undefined;return}
+  const row=(r.data||[])[0];
+  RISING=row?{
+    uid:"t:"+row.track_id,
+    track:{id:row.track_id,title:row.title,key:row.key||"",bpm:row.bpm||0,path:row.audio_path},
+    artist:{id:row.artist_id,name:row.artist_name||row.artist_handle||"Someone",
+            photo_path:row.artist_photo,city:row.artist_city||"",
+            bio:row.artist_bio||"",instruments:row.artist_instruments||[],
+            genres:row.artist_genres||[]},
+    plays:Number(row.plays||0), miles:row.miles,
+    shared:row.shared_genres||[], days:row.uploaded_days_ago
+  }:undefined;
+  if($("#v-radio")&&$("#v-radio").classList.contains("on"))renderRadio();
+}
+
+function renderNewArtist(r){
+  if(!LIVE)return;
+  if(RISING===null){            /* still loading; say nothing rather than flash */
+    return;
+  }
+  if(RISING===undefined)return; /* nobody new to show, so no empty box */
+
+  const a=RISING.artist;
+  r.appendChild(el("div","sechead",
+    `<h2>Discover a new artist</h2><span class="more">${RISING.plays===0?"Not played yet":nfmt(RISING.plays)+" "+(RISING.plays===1?"play":"plays")}</span>`));
+
+  const card=el("div","newartist");
+  const bits=[
+    a.city||"",
+    RISING.miles!=null?distLabel(RISING.miles):"",
+    (a.instruments||[]).slice(0,2).join(", ")
+  ].filter(Boolean).join(" · ");
+
+  card.innerHTML=`
+    <div class="na-top">
+      <div class="av">${avatarOf(a)}</div>
+      <div class="na-who"><b>${esc(a.name)}</b><span>${esc(bits)}</span></div>
+      <button class="pbtn" data-play="${esc(RISING.uid)}" data-naplay="1"
+        aria-label="Play ${esc(RISING.track.title)}">${nowPlaying===RISING.uid?ICON_PAUSE:ICON_PLAY}</button>
+    </div>
+    <div class="na-track"><b>${esc(RISING.track.title)}</b>
+      <span>${[RISING.track.key,RISING.track.bpm?RISING.track.bpm+" bpm":"",
+               RISING.days===0?"added today":RISING.days===1?"added yesterday":
+               RISING.days!=null?"added "+RISING.days+" days ago":""]
+              .filter(Boolean).join(" · ")}</span></div>
+    ${a.bio?`<p class="na-bio">${esc(a.bio.length>150?a.bio.slice(0,150).trim()+"…":a.bio)}</p>`:""}
+    ${RISING.shared.length?`<div class="na-tags">${RISING.shared.slice(0,3).map(g=>`<span>${esc(g)}</span>`).join("")}<em>you both play this</em></div>`:""}
+    <button class="btn ghost" data-naprofile="1" style="width:100%;margin-top:10px">See ${esc(a.name.split(" ")[0])}'s profile</button>`;
+
+  card.querySelector("[data-naplay]").onclick=ev=>{
+    ev.preventDefault();ev.stopPropagation();play(RISING.track,RISING.artist);
+  };
+  card.querySelector("[data-naprofile]").onclick=()=>{
+    remember([rowToArtist({id:a.id,display_name:a.name,handle:a.name,city:a.city,
+      photo_path:a.photo_path,instruments:a.instruments,genres:a.genres})]);
+    openProfile(a.id);
+  };
+  r.appendChild(card);
+
+  const another=el("button","btn ghost","Show me somebody else");
+  another.style.cssText="width:calc(100% - 32px);margin:9px 16px 0";
+  another.onclick=()=>{RISING=null;renderRadio();loadRising()};
+  r.appendChild(another);
 }
 
 /* ============ chats ============ */
@@ -5847,6 +6012,7 @@ const DB = {
   /* ---- the chart ---- */
   weeklyChart(n){ return JammyAPI.sb.rpc("weekly_chart",{limit_n:n||10}).then(r=>({data:r.data,error:r.error})); },
   listeningNow(){ return JammyAPI.sb.rpc("listening_now").then(r=>({data:r.data,error:r.error})); },
+  risingTrack(){ return JammyAPI.sb.rpc("rising_track").then(r=>({data:r.data,error:r.error})); },
 
   /* ---- your account ---- */
   exportMyData(){ return JammyAPI.account.export(); },
@@ -6070,7 +6236,7 @@ function renderStep(){
           /* Signed in. If a profile already exists, this is a returning
              user and the rest of onboarding is just in their way. */
           const me=await DB.loadMe();
-          if(me.data){adoptProfile(me.data);S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();loadMyTracks();
+          if(me.data){adoptProfile(me.data);S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();loadMyTracks();loadRising();
             $("#onb").classList.remove("on");go("disc");toast("Welcome back");return}
         }
         obGo(3);toast("Verified");
@@ -6243,7 +6409,7 @@ async function finishOnboarding(){
   }else if(obDraft.loc){
     S.me.loc=obDraft.loc;
   }
-  S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();loadMyTracks();obGo(10);
+  S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();loadMyTracks();loadRising();obGo(10);
 }
 $("#ob-back").onclick=()=>obGo(obStep-1);
 $("#ob-skip").onclick=()=>obGo(obStep+1);
@@ -6274,7 +6440,7 @@ async function resumeSession(){
   if(me.data){
     adoptProfile(me.data);S.onboarded=true;save();
     $("#onb").classList.remove("on");renderAll();
-    loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();loadMyTracks();
+    loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();loadMyTracks();loadRising();
     setTimeout(()=>locateOnLaunch(),250);
   }else{
     /* Signed in, but the profile was never finished — drop them back
