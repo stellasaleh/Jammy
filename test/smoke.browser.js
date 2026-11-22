@@ -181,7 +181,10 @@ window.JammyAPI = {
            logPlay: (id,secs) => { window.__calls.push("logPlay:"+id); return okr(null); },
            upload: (blob,meta) => { window.__calls.push("uploadTrack:"+(meta&&meta.title)); return okr({id:"t9"}); },
            url: (p) => p ? "/_t/"+p : null,
-           mine: () => okr(rows.myTracks || []) },
+           mine: () => okr(rows.myTracks || []),
+           removeTrack: (id) => { window.__calls.push("removeTrack:"+id);
+                                  rows.myTracks = rows.myTracks.filter(t=>t.id!==id);
+                                  return okr(true); } },
   safety: { blocked: () => okr([]), block: (id) => { window.__calls.push("block"); return okr({}); },
             unblock: () => okr({}), report: () => { window.__calls.push("report"); return okr({}); } },
 };
@@ -670,6 +673,27 @@ const PRIME = `try { localStorage.setItem("jammy:v1", JSON.stringify({ onboarded
     await page.waitForTimeout(300);
     ok((await calls()).some((c) => c === "logPlay:t1"), "and a full listen is reported, so the chart can fill");
     await page.evaluate(() => stopAudio());
+  }
+
+  console.log("\n-- taking a recording back down --");
+  await page.evaluate(() => go("you")); await page.waitForTimeout(700);
+  {
+    ok(!!(await page.$("[data-rmtrack]")), "your own recording has a way to remove it");
+    clear();
+    if (await clickIt("[data-rmtrack]", "the remove button can be pressed")) {
+      pass++; console.log("  \u2713 the remove button can be pressed");
+      await page.waitForTimeout(350);
+      ok(/off your profile and the radio/i.test(await page.textContent("#you .trow")),
+         "and it asks first, in the row rather than in a dialog");
+      ok(!(await calls()).some((c) => c.startsWith("removeTrack")), "with nothing removed yet");
+
+      if (await clickIt("[data-rmtrack-yes]", "and confirming can be pressed")) {
+        pass++; console.log("  \u2713 and confirming can be pressed");
+        await page.waitForTimeout(700);
+        ok((await calls()).some((c) => c === "removeTrack:t1"), "which removes it for real");
+        ok(!/Kitchen Demo 2/.test(await page.textContent("#you")), "and it leaves your profile");
+      }
+    }
   }
 
   console.log("\n-- the last thing, because it ends the session --");

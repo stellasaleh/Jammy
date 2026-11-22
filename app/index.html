@@ -651,6 +651,10 @@ nav .nb{position:absolute;top:4px;right:calc(50% - 20px);background:var(--mag);c
 .nowplaying .bot h3{font-size:19px;line-height:1.15}
 .nowplaying .bot span{font-size:13px;color:var(--dim)}
 /* The top three, set apart from the rest of the chart. */
+.iconbtn.trash{width:34px;height:34px;flex:none;border-radius:50%;display:grid;place-items:center;
+  background:transparent;border:1px solid var(--line);color:var(--dim)}
+.iconbtn.trash:hover{color:var(--mag);border-color:var(--mag)}
+.iconbtn.trash svg{width:15px;height:15px}
 .podium{padding:2px 16px 0;display:flex;flex-direction:column;gap:8px}
 .podrow{display:flex;align-items:center;gap:11px;width:100%;text-align:left;
   padding:11px 12px;border-radius:15px;border:1px solid var(--line);
@@ -1923,6 +1927,7 @@ function rootOf(k){const m=String(k).match(/^[A-G][#♭]?/);return NOTE[m?m[0]:"
 function scaleOf(k){return /minor|dorian|hijaz/i.test(k)?[0,2,3,5,7,8,10]:[0,2,4,5,7,9,11]}
 const ICON_PLAY='<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg>';
 const ICON_PAUSE='<svg aria-hidden="true" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';
+const ICON_TRASH='<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
 function stopAudio(){
   if(loopT)clearInterval(loopT);loopT=null;
   if(rafT)cancelAnimationFrame(rafT);rafT=null;
@@ -4175,11 +4180,18 @@ function renderYou(){
   y.appendChild(el("div","sechead",`<h2>Your tracks</h2><span class="more">On Jammy Radio</span>`));
   const tl=el("div","tracklist");
   (me.tracks||[]).forEach((t,i)=>{
-    const uid="me:"+t.title;
+    /* trackUid, not "me:"+title — a real recording is identified by its id,
+       and the play button has to agree with the player or its icon never
+       changes to pause. */
+    const uid=trackUid(t,me);
+    const plays=LIVE?t.plays:(t.plays+(S.plays[uid]||0)*137);
     const row=el("div","trow",`<div class="cov">${art(hash(uid),"",{k:"t"})}</div>
-      <div class="t"><b>${esc(t.title)}</b><span>${esc(t.key)} · ${t.bpm} bpm · ${nfmt(t.plays+(S.plays[uid]||0)*137)} plays</span></div>
+      <div class="t"><b>${esc(t.title)}</b><span>${[esc(t.key),t.bpm?t.bpm+" bpm":"",nfmt(plays)+" "+(plays===1?"play":"plays")].filter(Boolean).join(" · ")}</span></div>
+      ${LIVE&&t.id?`<button class="iconbtn trash" data-rmtrack="${esc(t.id)}" aria-label="Remove ${esc(t.title)}">${ICON_TRASH}</button>`:""}
       <button class="pbtn" data-play="${esc(uid)}">${nowPlaying===uid?ICON_PAUSE:ICON_PLAY}</button>`);
-    row.querySelector("button").onclick=()=>play(t,me);
+    row.querySelector("[data-play]").onclick=()=>play(t,me);
+    const rm=row.querySelector("[data-rmtrack]");
+    if(rm)rm.onclick=ev=>{ev.preventDefault();ev.stopPropagation();confirmRemoveTrack(t,row)};
     tl.appendChild(row);
   });
   y.appendChild(tl);
@@ -4292,6 +4304,37 @@ function openDeleteAccount(){
     clearThisDevice(true);
     toast("Your account is gone");
   };
+}
+
+/* Taking a recording down cannot be undone, so it asks first — in the row
+   itself. confirm() is no good here: the artifact viewer and some phone
+   browsers never show one, and a confirmation that silently returns false
+   is a button that quietly does nothing. */
+function confirmRemoveTrack(track,row){
+  const old=row.innerHTML;
+  row.innerHTML="";
+  const wrap=el("div");wrap.style.cssText="flex:1;min-width:0";
+  wrap.appendChild(el("div","",`Take <b>${esc(track.title)}</b> off your profile and the radio?`));
+  const note=el("div","");note.style.cssText="font-size:12px;color:var(--dim);margin-top:3px";
+  note.textContent="The recording is deleted and its plays go with it. This can't be undone.";
+  wrap.appendChild(note);
+  const acts=el("div");acts.style.cssText="display:flex;gap:8px;margin-top:9px";
+  const yes=el("button","btn","Remove");yes.style.cssText="padding:8px 13px;font-size:13px;background:#E5285C";
+  const no=el("button","btn ghost","Keep it");no.style.cssText="padding:8px 13px;font-size:13px";
+  yes.setAttribute("data-rmtrack-yes",track.id);
+  no.onclick=()=>{row.innerHTML=old;renderYou()};
+  yes.onclick=async()=>{
+    yes.disabled=true;no.disabled=true;yes.textContent="Removing…";
+    const r=await DB.removeTrack(track.id);
+    if(r.error){yes.disabled=false;no.disabled=false;yes.textContent="Remove";
+      toast(authMessage(r.error));return}
+    if(nowPlaying===trackUid(track,S.me))stopAudio();
+    await loadMyTracks();
+    renderYou();loadChart();loadRising();
+    toast(track.title+" removed");
+  };
+  acts.appendChild(yes);acts.appendChild(no);wrap.appendChild(acts);
+  row.appendChild(wrap);
 }
 
 /* photos live in their own sheet so the edit form stays short */
@@ -6007,6 +6050,7 @@ const DB = {
   uploadTrack(blob,meta){ return JammyAPI.radio.upload(blob,meta); },
   trackUrl(path){ return JammyAPI.radio.url(path); },
   myTracks(){ return JammyAPI.radio.mine(); },
+  removeTrack(id){ return JammyAPI.radio.removeTrack(id); },
   logPlay(id,secs,src){ return JammyAPI.radio.logPlay(id,secs,src); },
 
   /* ---- the chart ---- */

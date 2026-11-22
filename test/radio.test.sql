@@ -205,6 +205,47 @@ begin
 end $$;
 
 -- ------------------------------------------------------------
+--  9. Taking a recording down takes it off the radio too
+--
+--  Stella's question: if I upload a track, can I remove it later?
+--  Off the profile is the easy half. Off the chart is the half
+--  that would quietly not happen if play_daily did not cascade —
+--  the track would be gone and its plays would still be ranked.
+-- ------------------------------------------------------------
+do $$
+declare n int; tr uuid;
+begin
+  -- Ana's track has real plays on it by now
+  perform pg_temp.be(current_setting('test.ana')::uuid);
+  tr := current_setting('test.track_ana')::uuid;
+
+  select count(*)::int into n from weekly_chart(50) where track_id = tr;
+  perform pg_temp.chk('the track is on the chart to begin with', n = 1, n::text);
+
+  delete from tracks where id = tr;
+  select count(*)::int into n from tracks where id = tr;
+  perform pg_temp.chk('you can delete your own recording', n = 0, n::text);
+
+  select count(*)::int into n from weekly_chart(50) where track_id = tr;
+  perform pg_temp.chk('and it leaves the chart with it', n = 0, n::text);
+
+  select count(*)::int into n from tracks_by(current_setting('test.ana')::uuid);
+  perform pg_temp.chk('and your profile no longer lists it', n = 0, n::text);
+end $$;
+
+-- ------------------------------------------------------------
+--  10. But only your own
+-- ------------------------------------------------------------
+do $$
+declare n int;
+begin
+  perform pg_temp.be(current_setting('test.cass')::uuid);
+  delete from tracks where id = current_setting('test.track_bo')::uuid;
+  select count(*)::int into n from tracks where id = current_setting('test.track_bo')::uuid;
+  perform pg_temp.chk('you cannot delete somebody else''s recording', n = 1, n::text);
+end $$;
+
+-- ------------------------------------------------------------
 --  Results
 -- ------------------------------------------------------------
 \pset tuples_only off

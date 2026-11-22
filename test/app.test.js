@@ -101,6 +101,7 @@ function makeAPI(opts = {}) {
       upload: async (blob, meta) => { log.push("uploadTrack:" + (meta && meta.title)); return opts.uploadTrackFails ? err(opts.uploadTrackFails) : { data: { id: "t9" }, error: null }; },
       url: (p) => p ? "https://files.example/" + p : null,
       mine: async () => ({ data: opts.myTracks || [], error: null }),
+      removeTrack: async (id) => { log.push("removeTrack:" + id); return opts.removeTrackFails ? err(opts.removeTrackFails) : { data: true, error: null }; },
     },
     account: {
       export: async () => { log.push("exportMyData"); return { data: opts.exportData || { profile: { display_name: "Stella Saleh" }, posts: [] }, error: null }; },
@@ -1367,6 +1368,76 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     ok(!w.document.querySelector(".newartist"), "no card at all");
     ok(!/Discover a new artist/.test(w.document.querySelector("#radio").textContent),
        "and no heading for it either");
+  }
+
+  /* ----------------------------------------------------------
+     55. TAKING A RECORDING DOWN. Stella asked whether a track can
+     be removed later. It could not: the API function existed and
+     nothing called it, so an upload was permanent.
+     ---------------------------------------------------------- */
+  const MYTRACKS = [{ id: "t1", title: "Kitchen Demo 2", key: "A minor", bpm: 104,
+                      audio_path: "u1/tracks/abc.mp3", plays: 3 }];
+
+  console.log("\n55. YOU CAN TAKE YOUR OWN RECORDING DOWN");
+  {
+    const { w, api } = await boot(true, signedIn({ myTracks: MYTRACKS }));
+    await wait(280);
+    w.__peek('go("you")'); await wait(220);
+
+    const btn = w.document.querySelector("[data-rmtrack]");
+    ok(!!btn, "there is a way to remove it");
+
+    btn.click(); await wait(160);
+    const row = w.document.querySelector(".trow");
+    ok(/off your profile and the radio/i.test(row.textContent), "it asks first, in the row");
+    ok(/can't be undone/i.test(row.textContent), "and says it cannot be undone");
+    ok(!api._log.some((l) => l.startsWith("removeTrack")), "and has not removed anything yet");
+
+    w.document.querySelector("[data-rmtrack-yes]").click(); await wait(260);
+    ok(api._log.some((l) => l === "removeTrack:t1"), "confirming removes it for real");
+  }
+
+  console.log("\n55b. CHANGING YOUR MIND leaves it alone");
+  {
+    const { w, api } = await boot(true, signedIn({ myTracks: MYTRACKS }));
+    await wait(280);
+    w.__peek('go("you")'); await wait(220);
+    w.document.querySelector("[data-rmtrack]").click(); await wait(160);
+
+    const keep = [...w.document.querySelectorAll(".trow button")]
+      .find((b) => /keep it/i.test(b.textContent));
+    ok(!!keep, "there is a way out of it");
+    keep.click(); await wait(200);
+    ok(!api._log.some((l) => l.startsWith("removeTrack")), "and nothing is removed");
+    ok(/Kitchen Demo 2/.test(w.document.querySelector("#you").textContent),
+       "and the recording is still there");
+  }
+
+  console.log("\n55c. A REFUSED REMOVAL says why, and keeps the track");
+  {
+    const { w } = await boot(true, signedIn({
+      myTracks: MYTRACKS, removeTrackFails: "that recording isn't yours" }));
+    await wait(280);
+    w.__peek('go("you")'); await wait(220);
+    w.document.querySelector("[data-rmtrack]").click(); await wait(160);
+    w.document.querySelector("[data-rmtrack-yes]").click(); await wait(300);
+    const t = w.document.querySelector("#toast");
+    ok(t && /isn't yours/i.test(t.textContent), "the reason is shown");
+    ok(/Kitchen Demo 2/.test(w.document.querySelector("#you").textContent),
+       "and the recording stays");
+  }
+
+  console.log("\n55d. AND THE PLAY BUTTON ON YOUR PROFILE knows what is playing");
+  {
+    /* Same bug as the chart had: the button carried "me:"+title while the
+       player keys on the track's id, so the icon never changed to pause. */
+    const { w } = await boot(true, signedIn({ myTracks: MYTRACKS }));
+    await wait(280);
+    w.__peek('go("you")'); await wait(220);
+    const playBtn = w.document.querySelector(".trow [data-play]");
+    w.__peek('play(S.me.tracks[0], S.me)'); await wait(200);
+    ok(playBtn.dataset.play === w.__peek("nowPlaying"),
+       "the button and the player agree on what is playing");
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

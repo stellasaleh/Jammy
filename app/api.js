@@ -573,7 +573,37 @@
       return sb.rpc("tracks_by", { who: me });
     }),
 
-    removeTrack: (id) => call(() => sb.from("tracks").delete().eq("id", id)),
+    /* Taking a recording down: off your profile, off the radio, and the
+       file itself out of storage.
+
+       The row goes first and the file second, deliberately. If the file
+       went first and the row failed, you would be left with a track that
+       plays nothing. This way round the worst case is a file nobody can
+       reach any more, which costs a little space and breaks nothing —
+       and the chart entry goes either way, because play_daily cascades
+       from tracks. */
+    async removeTrack(id) {
+      const me = await uid();
+      if (!me) return fail(new Error("not signed in"));
+
+      const found = await call(() =>
+        sb.from("tracks").select("audio_path, owner_id").eq("id", id).single()
+      );
+      if (found.error) return found;
+      if (found.data && found.data.owner_id !== me)
+        return fail(new Error("that recording isn't yours"));
+
+      const gone = await call(() => sb.from("tracks").delete().eq("id", id));
+      if (gone.error) return gone;
+
+      const path = found.data && found.data.audio_path;
+      if (path) {
+        /* Best effort. The recording is already off Jammy at this point,
+           so a failure here is not worth telling anybody about. */
+        try { await sb.storage.from("jammy-media").remove([path]); } catch (e) {}
+      }
+      return { data: true, error: null };
+    },
 
     /* Fifteen seconds counts as a play. The real rule is the roll_up_play
        trigger in the database — this only avoids a round trip that the
