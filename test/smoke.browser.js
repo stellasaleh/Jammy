@@ -38,6 +38,9 @@ const rows = {
   /* What band_schedule() hands a NON-MEMBER: the public gig, with no
      address and no note, and no sign of the practice at all. The real
      function decides this; the fake must not be more generous than it. */
+  myTracks: [{id:"t1",title:"Kitchen Demo 2",key:"A minor",bpm:104,
+              audio_path:"u1/tracks/abc.mp3",is_public:true,
+              created_at:new Date().toISOString(),plays:0}],
   feed: [{id:"f1",author_id:"u5",body:"Looking for a drummer. Tuesdays, Brighton.",
           tag:"looking",track_id:null,media_path:null,
           fields:{instrument:"Drums",when:"Tue evenings",where:"Brighton"},
@@ -45,6 +48,9 @@ const rows = {
           like_count:3,comment_count:1,author_name:"Rue Delacroix",
           author_handle:"rue",author_city:"Boston",author_photo:null,
           liked_by_me:false,mine:false}],
+  myTracks: [{id:"t1",title:"Kitchen Demo 2",key:"A minor",bpm:104,
+              audio_path:"u1/tracks/abc.mp3",is_public:true,
+              created_at:new Date().toISOString(),plays:0}],
   feed: [{id:"f1",author_id:"u5",body:"Looking for a drummer. Tuesdays, Brighton.",
           tag:"looking",track_id:null,media_path:null,
           fields:{instrument:"Drums",when:"Tue evenings",where:"Brighton"},
@@ -143,7 +149,11 @@ window.JammyAPI = {
                              return okr({profile:{display_name:"Stella Saleh"},posts:[]}); },
              remove: (w) => { window.__calls.push("account.remove:"+w); return okr({deleted:true}); } },
   clips: { send: () => okr({}), url: () => okr("") },
-  radio: { chart: () => okr([]), logPlay: () => okr({}) },
+  radio: { chart: () => okr(rows.chart || []),
+           logPlay: (id,secs) => { window.__calls.push("logPlay:"+id); return okr(null); },
+           upload: (blob,meta) => { window.__calls.push("uploadTrack:"+(meta&&meta.title)); return okr({id:"t9"}); },
+           url: (p) => p ? "/_t/"+p : null,
+           mine: () => okr(rows.myTracks || []) },
   safety: { blocked: () => okr([]), block: (id) => { window.__calls.push("block"); return okr({}); },
             unblock: () => okr({}), report: () => { window.__calls.push("report"); return okr({}); } },
 };
@@ -558,6 +568,29 @@ const PRIME = `try { localStorage.setItem("jammy:v1", JSON.stringify({ onboarded
 
   ok(errors.length === 0, "no errors during the whole walk" + (errors.length ? " — " + errors.slice(0, 2).join(" / ") : ""));
 
+
+  console.log("-- the video call is gone --");
+  ok(await page.evaluate(() => typeof openCallWith === "undefined"),
+     "there is no call function left");
+  ok(!(await page.$("#ch-call")), "no call button in a conversation");
+  ok(!(await page.$("#call")), "and no call screen in the page");
+
+  console.log("\n-- the radio plays the recording, not a synthesiser --");
+  await page.evaluate(() => go("you")); await page.waitForTimeout(500);
+  {
+    ok(await page.evaluate(() => S.me.tracks.length > 0), "your recordings load from the server");
+    ok(await page.evaluate(() => !!S.me.tracks[0].path), "and each knows where its file is");
+    clear();
+    const ok1 = await page.evaluate(() => {
+      play(S.me.tracks[0], { id: "u1", name: "Stella Saleh" });
+      return typeof realAudio !== "undefined" && realAudio !== null;
+    });
+    ok(ok1, "pressing play opens the actual recording");
+    await page.evaluate(() => { realPlayedFor = 31; reportPlay(); });
+    await page.waitForTimeout(300);
+    ok((await calls()).some((c) => c === "logPlay:t1"), "and a full listen is reported, so the chart can fill");
+    await page.evaluate(() => stopAudio());
+  }
 
   console.log("\n-- the last thing, because it ends the session --");
   console.log("\n-- delete my account, which Apple requires --");

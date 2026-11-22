@@ -527,6 +527,54 @@
           .order("score", { ascending: false })
           .limit(10)
       ),
+    /* Putting a recording on your profile.
+
+       The sheet that asks for this used to read the title, the key and the
+       tempo and throw the audio file away, then say "Published — you're in
+       the rotation". The file goes to storage now and the row points at it,
+       so pressing play opens the actual recording. */
+    async upload(blob, { title, key, bpm, durationMs } = {}) {
+      const me = await uid();
+      if (!me) return fail(new Error("not signed in"));
+      if (!blob || !blob.size) return fail(new Error("Pick an audio file first."));
+      if (blob.size > 40 * 1024 * 1024)
+        return fail(new Error("That file is bigger than 40MB. Try a shorter clip or a smaller export."));
+
+      const type = blob.type || "audio/mpeg";
+      const ext = ({ "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/x-m4a": "m4a",
+                     "audio/wav": "wav", "audio/x-wav": "wav", "audio/ogg": "ogg",
+                     "audio/webm": "webm", "audio/flac": "flac" })[type]
+                || (blob.name && blob.name.split(".").pop()) || "mp3";
+
+      const path = `${me}/tracks/${crypto.randomUUID()}.${ext}`;
+      const up = await call(() =>
+        sb.storage.from("jammy-media").upload(path, blob, { contentType: type, cacheControl: "3600" })
+      );
+      if (up.error) return up;
+
+      return call(() =>
+        sb.from("tracks").insert({
+          owner_id: me,
+          title: (title || "Untitled").slice(0, 120),
+          audio_path: path,
+          key: key || null,
+          bpm: bpm || null,
+          duration_ms: durationMs || null,
+        }).select().single()
+      );
+    },
+
+    /* The bucket is public to read, so this needs no round trip. */
+    url: (path) =>
+      path ? sb.storage.from("jammy-media").getPublicUrl(path).data.publicUrl : null,
+
+    mine: () => call(async () => {
+      const me = await uid();
+      return sb.rpc("tracks_by", { who: me });
+    }),
+
+    removeTrack: (id) => call(() => sb.from("tracks").delete().eq("id", id)),
+
     /* only count a play at 30 seconds or more, or the chart is trivially gamed */
     logPlay: (trackId, seconds, source) =>
       seconds < 30

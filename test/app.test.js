@@ -94,7 +94,13 @@ function makeAPI(opts = {}) {
       send: async (c, blob, meta) => { log.push("sendClip:" + c); return opts.clipFails ? err(opts.clipFails) : { data: { id: "m1" }, error: null }; },
       url: async (p) => ({ data: { signedUrl: "https://files.example/" + p }, error: null }),
     },
-    radio: { chart: async () => ({ data: opts.chart || [], error: null }), logPlay: async () => ({}) },
+    radio: {
+      chart: async () => ({ data: opts.chart || [], error: null }),
+      logPlay: async (id, secs, src) => { log.push("logPlay:" + id + ":" + Math.round(secs)); return { data: null, error: null }; },
+      upload: async (blob, meta) => { log.push("uploadTrack:" + (meta && meta.title)); return opts.uploadTrackFails ? err(opts.uploadTrackFails) : { data: { id: "t9" }, error: null }; },
+      url: (p) => p ? "https://files.example/" + p : null,
+      mine: async () => ({ data: opts.myTracks || [], error: null }),
+    },
     account: {
       export: async () => { log.push("exportMyData"); return { data: opts.exportData || { profile: { display_name: "Stella Saleh" }, posts: [] }, error: null }; },
       remove: async (w) => { log.push("deleteAccount:" + w); return opts.deleteAccountFails ? err(opts.deleteAccountFails) : { data: { deleted: true }, error: null }; },
@@ -1138,6 +1144,92 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     await wait(300);
     const t = w.document.querySelector("#toast");
     ok(t && /upload failed/i.test(t.textContent), "the reason is shown rather than silence");
+  }
+
+  /* ----------------------------------------------------------
+     49. THE RADIO. Uploading threw the audio file away, pressing
+     play synthesised a tune from the key and tempo instead of
+     opening the recording, and plays were counted on your own
+     phone only — so the chart could never fill.
+     ---------------------------------------------------------- */
+  console.log("\n49. UPLOADING A TRACK keeps the file");
+  {
+    const { w, api } = await boot(true, signedIn({}));
+    await wait(200);
+    w.__peek("openUpload()"); await wait(140);
+
+    ok(!!w.document.querySelector("#up-f"), "the sheet asks for an audio file");
+
+    /* press Publish with no file chosen */
+    w.document.querySelector("#up-t").value = "Kitchen Demo 2";
+    w.document.querySelector("#up-go").click(); await wait(200);
+    ok(!api._log.some((l) => l.startsWith("uploadTrack")),
+       "publishing without a file does not pretend to publish");
+    const t1 = w.document.querySelector("#toast");
+    ok(t1 && /audio file/i.test(t1.textContent), "it asks for one instead");
+  }
+
+  console.log("\n50. PLAYING a real recording opens the file, not a synthesiser");
+  {
+    const TRACKS = [{ id: "t1", title: "Kitchen Demo 2", key: "A minor", bpm: 104,
+                      audio_path: "u1/tracks/abc.mp3", plays: 0 }];
+    const { w, api } = await boot(true, signedIn({ myTracks: TRACKS }));
+    await wait(260);
+
+    ok(w.__peek("S.me.tracks.length") === 1, "your recordings load from the server");
+    ok(w.__peek("S.me.tracks[0].path") === "u1/tracks/abc.mp3",
+       "and each one knows where its file is");
+
+    /* play it, and watch what the app reaches for */
+    w.__peek('play(S.me.tracks[0], {id:"u1", name:"Stella Saleh"})');
+    await wait(200);
+    ok(w.__peek("realAudio !== null"), "pressing play opens the actual recording");
+    ok(w.__peek("nowPlaying !== null"), "and the player starts");
+  }
+
+  console.log("\n50b. A PLAY IS REPORTED, so the chart can fill");
+  {
+    const TRACKS = [{ id: "t1", title: "Kitchen Demo 2", key: "A minor", bpm: 104,
+                      audio_path: "u1/tracks/abc.mp3", plays: 0 }];
+    const { w, api } = await boot(true, signedIn({ myTracks: TRACKS }));
+    await wait(260);
+    w.__peek('play(S.me.tracks[0], {id:"u1", name:"Stella Saleh"})');
+    await wait(120);
+
+    /* under thirty seconds is not a play — otherwise the chart is climbed
+       by tapping play */
+    w.__peek("realPlayedFor = 12; reportPlay()");
+    ok(!api._log.some((l) => l.startsWith("logPlay")), "twelve seconds is not a play");
+
+    w.__peek("realPlayedFor = 31; reportPlay()");
+    await wait(140);
+    ok(api._log.some((l) => l.startsWith("logPlay:t1")), "thirty-one seconds is");
+
+    const n = api._log.filter((l) => l.startsWith("logPlay")).length;
+    w.__peek("reportPlay(); reportPlay()");
+    await wait(140);
+    ok(api._log.filter((l) => l.startsWith("logPlay")).length === n,
+       "and one listen is reported once, not once a second");
+  }
+
+  /* ----------------------------------------------------------
+     51. VIDEO CALLING, removed on request. It opened your own
+     camera, drew the others as artwork and reported a made-up
+     round-trip time, while contacting nobody.
+     ---------------------------------------------------------- */
+  console.log("\n51. THE VIDEO CALL is gone, and cannot come back by accident");
+  {
+    const { w } = await boot(true, signedIn({}));
+    await wait(200);
+    ok(w.__peek('typeof openCallWith') === "undefined", "there is no call function left");
+    ok(!w.document.querySelector("#ch-call"), "no call button in a conversation");
+    ok(!w.document.querySelector("#call"), "and no call screen in the page");
+
+    /* the exact string the screen used to print, not the word in the
+       comment that records why it was removed */
+    const html = fs.readFileSync(APP, "utf8");
+    ok(!/Round trip <b>/.test(html), "and the invented round-trip readout is gone with it");
+    ok(!/cl-grid|cl-video|startCam/.test(html), "with none of the call screen left behind");
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

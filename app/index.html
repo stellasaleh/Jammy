@@ -684,8 +684,8 @@ nav .nb{position:absolute;top:4px;right:calc(50% - 20px);background:var(--mag);c
    impossible to click, because the panel was still catching every tap.
    Stacking order, top down: onboarding 95, toast 80, modal 70, these 40,
    panels 32, the app 5. */
-#chat,#call,#sheet{position:absolute;inset:0;z-index:40;display:none;flex-direction:column;background:var(--bg)}
-#chat.on,#call.on,#sheet.on{display:flex}
+#chat,#sheet{position:absolute;inset:0;z-index:40;display:none;flex-direction:column;background:var(--bg)}
+#chat.on,#sheet.on{display:flex}
 .chead{flex:none;display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line);background:var(--surface)}
 .chead .av{width:38px;height:38px}
 .chead .t{flex:1;min-width:0}
@@ -713,7 +713,6 @@ nav .nb{position:absolute;top:4px;right:calc(50% - 20px);background:var(--mag);c
 .cbar .send svg{width:18px;height:18px;stroke:#fff;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 
 /* ---------- call ---------- */
-#call{background:#08040A}
 .grid{flex:1;min-height:0;display:grid;gap:6px;padding:6px;grid-template-columns:1fr 1fr}
 .tile{position:relative;border-radius:16px;overflow:hidden;background:#150A1A;display:grid;place-items:center}
 .tile svg.face{width:100%;height:100%;position:absolute;inset:0;opacity:.85}
@@ -725,15 +724,6 @@ nav .nb{position:absolute;top:4px;right:calc(50% - 20px);background:var(--mag);c
 .callhead{flex:none;padding:10px 16px;display:flex;align-items:center;gap:10px;color:#fff}
 .callhead .t b{display:block;font-size:15px}
 .callhead .t span{font-size:11.5px;color:rgba(247,240,228,.56)}
-.studio{margin-left:auto;display:flex;align-items:center;gap:8px;background:rgba(229,40,92,.15);
-  border:1px solid rgba(229,40,92,.4);border-radius:999px;padding:6px 12px;font-size:11.5px;font-weight:600;color:#FFB5DC}
-.studio .sw{width:30px;height:17px;border-radius:999px;background:var(--mag);position:relative;transition:background .2s}
-.studio .sw::after{content:"";position:absolute;top:2px;left:15px;width:13px;height:13px;border-radius:50%;background:#fff;transition:left .2s}
-.studio.off{background:rgba(247,240,228,.07);border-color:rgba(247,240,228,.16);color:rgba(247,240,228,.56)}
-.studio.off .sw{background:rgba(255,255,255,.25)}
-.studio.off .sw::after{left:2px}
-.callinfo{padding:0 16px 8px;font-size:11.5px;color:#8E7797;display:flex;gap:12px;flex-wrap:wrap}
-.callinfo b{color:var(--mint);font-weight:600}
 .callacts{flex:none;display:flex;justify-content:center;gap:14px;padding:12px 0 18px}
 .callacts button{width:54px;height:54px;border-radius:50%;background:rgba(255,255,255,.1);display:grid;place-items:center;color:#fff}
 .callacts button svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
@@ -931,7 +921,6 @@ nav .nb{position:absolute;top:4px;right:calc(50% - 20px);background:var(--mag);c
         <button id="ch-back" class="iconbtn" style="background:transparent;border:0" aria-label="Back"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
         <div class="av" id="ch-av"></div>
         <div class="t"><b id="ch-name"></b><span id="ch-sub"></span></div>
-        <button class="iconbtn" id="ch-call" aria-label="Start video call"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M15 10l6-4v12l-6-4z"/><rect x="3" y="6" width="12" height="12" rx="2.5"/></svg></button>
       </div>
       <div class="msgs" id="ch-msgs"></div>
       <div class="recbar" id="recbar">
@@ -949,19 +938,7 @@ nav .nb{position:absolute;top:4px;right:calc(50% - 20px);background:var(--mag);c
     </div>
 
     <!-- CALL OVERLAY -->
-    <div id="call">
-      <div class="callhead">
-        <div class="t"><b id="cl-title">Jam room</b><span id="cl-sub">Connecting…</span></div>
-        <button class="studio" id="cl-studio"><span>Studio audio</span><span class="sw"></span></button>
-      </div>
-      <div class="callinfo" id="cl-info"></div>
-      <div class="grid" id="cl-grid"></div>
-      <div class="callacts">
-        <button id="cl-mic" aria-label="Mute"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
-        <button id="cl-cam" aria-label="Camera"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M15 10l6-4v12l-6-4z"/><rect x="3" y="6" width="12" height="12" rx="2.5"/></svg></button>
-        <button class="end" id="cl-end" aria-label="Leave"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 10c6-4 12-4 18 0l-2 4-4-1-1-3a12 12 0 0 0-4 0l-1 3-4 1z"/></svg></button>
-      </div>
-    </div>
+
 
     <!-- BAND LIST -->
     <div id="bandlist">
@@ -1909,13 +1886,72 @@ const ICON_PAUSE='<svg aria-hidden="true" viewBox="0 0 24 24"><rect x="6" y="5" 
 function stopAudio(){
   if(loopT)clearInterval(loopT);loopT=null;
   if(rafT)cancelAnimationFrame(rafT);rafT=null;
+  if(typeof stopRealAudio==="function")stopRealAudio();
   document.querySelectorAll(".wave i.hit").forEach(b=>b.classList.remove("hit"));
   document.querySelectorAll("[data-play]").forEach(b=>b.innerHTML=ICON_PLAY);
   nowPlaying=null;$("#mini").classList.remove("on");
 }
+/* The real recording, when there is one.
+
+   play() below synthesises a tune from the key and the tempo. That was the
+   right thing when every track was invented: there was no file to open. The
+   moment real musicians upload real recordings it becomes the wrong thing —
+   it replaces somebody's music with a computer-generated melody and leaves
+   their name on it. So a track with a file plays the file. */
+let realAudio=null, realPlayedFor=0, realTimer=null, realTrackId=null;
+
+function stopRealAudio(){
+  if(realTimer){clearInterval(realTimer);realTimer=null}
+  if(realAudio){try{realAudio.pause()}catch(e){}realAudio=null}
+  realTrackId=null;realPlayedFor=0;
+}
+
+function playReal(track,artist,uid){
+  stopAudio();stopRealAudio();
+  const url=DB.trackUrl(track.path);
+  if(!url){toast("That recording isn't available");return}
+
+  nowPlaying=uid;realTrackId=track.id;
+  $("#mini").classList.add("on");
+  $("#mp-cov").innerHTML=art(hash(uid),initials(artist.name),{size:170,k:"m"});
+  $("#mp-title").textContent=track.title;
+  $("#mp-by").textContent=[artist.name,track.key,track.bpm?track.bpm+" bpm":""].filter(Boolean).join(" · ");
+  $("#mp-btn").innerHTML=ICON_PAUSE;
+  document.querySelectorAll(`[data-play="${CSS.escape(uid)}"]`).forEach(b=>b.innerHTML=ICON_PAUSE);
+
+  realAudio=new Audio(url);
+  realAudio.onended=()=>{reportPlay();stopAudio()};
+  realAudio.onerror=()=>{toast("Couldn't play that recording");stopAudio()};
+
+  /* A play counts at thirty seconds, which is the server's rule too — a
+     chart you can climb by tapping play is not a chart. */
+  realPlayedFor=0;
+  realTimer=setInterval(()=>{realPlayedFor++;if(realPlayedFor===30)reportPlay()},1000);
+
+  /* play() returns a promise in current browsers and nothing at all in
+     older Safari, so it cannot be assumed to have .catch */
+  const started=realAudio.play();
+  if(started&&typeof started.catch==="function")
+    started.catch(()=>{toast("Tap play again to start");stopAudio()});
+}
+
+let reportedPlays={};
+function reportPlay(){
+  if(!LIVE||!realTrackId)return;
+  if(realPlayedFor<30)return;
+  if(reportedPlays[realTrackId])return;      /* once per listen, not per second */
+  reportedPlays[realTrackId]=true;
+  const id=realTrackId,secs=realPlayedFor;
+  DB.logPlay(id,secs,"radio").then(()=>{setTimeout(()=>{delete reportedPlays[id]},60000)});
+}
+
 function play(track,artist){
   const uid=(artist.id||"me")+":"+track.title;
   if(nowPlaying===uid){stopAudio();return}
+
+  /* a real file beats a synthesised stand-in, always */
+  if(track&&track.path){playReal(track,artist,uid);return}
+
   stopAudio();
   try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();if(actx.state==="suspended")actx.resume()}
   catch(e){toast("Audio isn't available in this browser");return}
@@ -2044,7 +2080,7 @@ function renderStories(){
     const p=A(s.id);
     const d=el("div","story"+(s.live?" live":""),
       `<div class="ring"><div class="av">${avatarOf(p)}</div></div>${s.live?`<span class="lv">${esc(s.txt||"LIVE")}</span>`:""}<span>${esc(p.name.split(" ")[0])}</span>`);
-    d.onclick=()=>{if(s.live){openCallWith([s.id],p.name+"'s room")}else openProfile(s.id)};
+    d.onclick=()=>openProfile(s.id);
     c.appendChild(d);
   });
 }
@@ -3818,64 +3854,17 @@ const FILEI='<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="cur
 const ASKI='<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M21 11.5a8 8 0 0 1-11.6 7.1L4 20l1.4-4.6A8 8 0 1 1 21 11.5z"/></svg>';
 
 /* ============ video call ============ */
-let stream=null,micOn=true,camOn=true,studio=true,callTimer=null;
-function openCallWith(ids,title){
-  $("#cl-title").textContent=title||"Jam room";
-  $("#cl-sub").textContent="Connecting…";
-  const grid=$("#cl-grid");grid.innerHTML="";
-  const me=el("div","tile",`<video id="cl-video" autoplay playsinline muted></video>
-    <div class="nm">You${micOn?"":' <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 4l16 16"/></svg>'}</div>`);
-  grid.appendChild(me);
-  ids.slice(0,3).forEach((id,i)=>{
-    const p=A(id);
-    const t=el("div","tile"+(i===0?" speaking":""),`<svg aria-hidden="true" class="face" viewBox="0 0 400 400">${art(hash(p.id),initials(p.name),{k:"c"}).replace(/^<svg aria-hidden="true"[^>]*>|<\/svg>$/g,"")}</svg>
-      <div class="nm">${esc(p.name.split(" ")[0])} · ${esc(p.city)}</div>`);
-    grid.appendChild(t);
-  });
-  grid.style.gridTemplateColumns=ids.length<=1?"1fr":"1fr 1fr";
-  $("#call").classList.add("on");
-  startCam();
-  let sec=0;
-  $("#cl-info").innerHTML=`<span>Round trip <b>38 ms</b></span><span>Audio <b>48 kHz stereo</b></span><span>Processing <b>off</b></span>`;
-  clearInterval(callTimer);
-  callTimer=setInterval(()=>{sec++;const m=String(Math.floor(sec/60)).padStart(2,"0"),s=String(sec%60).padStart(2,"0");
-    $("#cl-sub").textContent=`${ids.length+1} in the room · ${m}:${s}`;
-    const tiles=[...grid.children].slice(1);
-    if(tiles.length){tiles.forEach(t=>t.classList.remove("speaking"));tiles[sec%tiles.length].classList.add("speaking")}
-  },1000);
-}
-async function startCam(){
-  const v=$("#cl-video");if(!v)return;
-  try{
-    stream=await navigator.mediaDevices.getUserMedia({
-      video:{facingMode:"user"},
-      audio:studio?{echoCancellation:false,noiseSuppression:false,autoGainControl:false,sampleRate:48000,channelCount:2}
-                  :{echoCancellation:true,noiseSuppression:true,autoGainControl:true}
-    });
-    v.srcObject=stream;
-  }catch(e){
-    v.remove();
-    const tile=$("#cl-grid").firstElementChild;
-    if(tile)tile.insertAdjacentHTML("afterbegin",`<svg aria-hidden="true" class="face" viewBox="0 0 400 400">${art(hash("me"+(S.me.name||"You")),initials(S.me.name||"You"),{k:"c"}).replace(/^<svg aria-hidden="true"[^>]*>|<\/svg>$/g,"")}</svg>`);
-  }
-}
-function stopCam(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}}
-$("#ch-call").onclick=()=>{
-  if(isBand){const b=Bnd(chatId);openCallWith(bandMembers(b).filter(m=>m.id).map(m=>m.id),b.name+" · jam room")}
-  else openCallWith([chatId],A(chatId).name.split(" ")[0]+" · jam room");
-};
-$("#cl-end").onclick=()=>{$("#call").classList.remove("on");stopCam();clearInterval(callTimer)};
-$("#cl-mic").onclick=()=>{micOn=!micOn;$("#cl-mic").classList.toggle("off",!micOn);
-  if(stream)stream.getAudioTracks().forEach(t=>t.enabled=micOn);toast(micOn?"Mic on":"Muted")};
-$("#cl-cam").onclick=()=>{camOn=!camOn;$("#cl-cam").classList.toggle("off",!camOn);
-  if(stream)stream.getVideoTracks().forEach(t=>t.enabled=camOn)};
-$("#cl-studio").onclick=async()=>{
-  studio=!studio;$("#cl-studio").classList.toggle("off",!studio);
-  $("#cl-info").innerHTML=studio?`<span>Round trip <b>38 ms</b></span><span>Audio <b>48 kHz stereo</b></span><span>Processing <b>off</b></span>`
-    :`<span>Round trip <b>38 ms</b></span><span>Audio <b>speech mode</b></span><span>Noise removal <b>on</b></span>`;
-  stopCam();await startCam();
-  toast(studio?"Studio audio: full range, no noise removal":"Speech mode: good for talking, bad for playing");
-};
+/* Video calling was removed on 22 November 2026, at Stella's request.
+
+   What stood here opened your own camera, drew the other people as
+   generated artwork, moved a "speaking" ring between them on a timer and
+   reported a round-trip time of 38 ms that was typed into the page. It
+   never contacted anybody: no WebRTC, no signalling, no server. Pressing
+   call did nothing on the other person's phone.
+
+   Jam clips are the honest version of the same idea and they are real: you
+   hold the microphone in a message, play something, and it arrives as a
+   recording. */
 
 /* ============ profile sheet ============ */
 function openProfile(id){
@@ -4243,14 +4232,62 @@ function openUpload(){
     <div class="field"><label>Audio file</label><input type="file" id="up-f" accept="audio/*"></div>
     <button class="btn" id="up-go" style="width:100%">Publish to Jammy Radio</button>`;
   $("#sheet").classList.add("on");
-  $("#up-go").onclick=()=>{
+  $("#up-go").onclick=async()=>{
     const t=$("#up-t").value.trim()||"Untitled";
+    const k=$("#up-k").value||null, bpm=+$("#up-b").value||null;
+    const file=($("#up-f").files||[])[0];
+
+    /* Signed in, the file is the point. This sheet used to read the title,
+       the key and the tempo, throw the audio away, and say "Published —
+       you're in the rotation". */
+    if(LIVE){
+      if(!file)return toast("Pick an audio file to upload");
+      const go=$("#up-go");go.disabled=true;go.textContent="Uploading…";
+      const dur=await audioDuration(file);
+      const r=await DB.uploadTrack(file,{title:t,key:k,bpm,durationMs:dur});
+      go.disabled=false;go.textContent="Publish to Jammy Radio";
+      if(r.error)return toast(authMessage(r.error));
+      $("#sheet").classList.remove("on");
+      await loadMyTracks();
+      renderYou();loadChart();
+      toast("Published — it's on your profile and in the rotation");
+      return;
+    }
+
     S.me.tracks=S.me.tracks||[];
-    S.me.tracks.unshift({title:t,key:$("#up-k").value||"A minor",bpm:+$("#up-b").value||100,plays:0});
+    S.me.tracks.unshift({title:t,key:k||"A minor",bpm:bpm||100,plays:0});
     save();$("#sheet").classList.remove("on");renderYou();renderRadio();toast("Published — you're in the rotation");
   };
 }
 
+
+/* How long a recording is, read from the file itself rather than asked for.
+   Returns null when the browser cannot tell, which is fine — it is only
+   used to show a length. */
+function audioDuration(file){
+  return new Promise(res=>{
+    try{
+      const a=new Audio(), u=URL.createObjectURL(file);
+      const done=v=>{try{URL.revokeObjectURL(u)}catch(e){}res(v)};
+      a.onloadedmetadata=()=>done(isFinite(a.duration)?Math.round(a.duration*1000):null);
+      a.onerror=()=>done(null);
+      setTimeout(()=>done(null),5000);
+      a.src=u;
+    }catch(e){res(null)}
+  });
+}
+
+/* Your own recordings, from the server. */
+async function loadMyTracks(){
+  if(!LIVE)return;
+  const r=await DB.myTracks();
+  if(r.error)return;
+  S.me.tracks=(r.data||[]).map(t=>({
+    id:t.id, title:t.title, key:t.key||"", bpm:t.bpm||0,
+    path:t.audio_path, plays:Number(t.plays||0)
+  }));
+  save();
+}
 
 /* ================= BANDS ================= */
 function bandArt(b){
@@ -5801,6 +5838,12 @@ const DB = {
   sendClip(convoId,blob,meta){ return JammyAPI.clips.send(convoId,blob,meta); },
   clipUrl(path){ return JammyAPI.clips.url(path); },
 
+  /* ---- recordings ---- */
+  uploadTrack(blob,meta){ return JammyAPI.radio.upload(blob,meta); },
+  trackUrl(path){ return JammyAPI.radio.url(path); },
+  myTracks(){ return JammyAPI.radio.mine(); },
+  logPlay(id,secs,src){ return JammyAPI.radio.logPlay(id,secs,src); },
+
   /* ---- the chart ---- */
   weeklyChart(n){ return JammyAPI.sb.rpc("weekly_chart",{limit_n:n||10}).then(r=>({data:r.data,error:r.error})); },
   listeningNow(){ return JammyAPI.sb.rpc("listening_now").then(r=>({data:r.data,error:r.error})); },
@@ -6027,7 +6070,7 @@ function renderStep(){
           /* Signed in. If a profile already exists, this is a returning
              user and the rest of onboarding is just in their way. */
           const me=await DB.loadMe();
-          if(me.data){adoptProfile(me.data);S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();
+          if(me.data){adoptProfile(me.data);S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();loadMyTracks();
             $("#onb").classList.remove("on");go("disc");toast("Welcome back");return}
         }
         obGo(3);toast("Verified");
@@ -6200,7 +6243,7 @@ async function finishOnboarding(){
   }else if(obDraft.loc){
     S.me.loc=obDraft.loc;
   }
-  S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();obGo(10);
+  S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();loadMyTracks();obGo(10);
 }
 $("#ob-back").onclick=()=>obGo(obStep-1);
 $("#ob-skip").onclick=()=>obGo(obStep+1);
@@ -6231,7 +6274,7 @@ async function resumeSession(){
   if(me.data){
     adoptProfile(me.data);S.onboarded=true;save();
     $("#onb").classList.remove("on");renderAll();
-    loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();
+    loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();loadMyTracks();
     setTimeout(()=>locateOnLaunch(),250);
   }else{
     /* Signed in, but the profile was never finished — drop them back
