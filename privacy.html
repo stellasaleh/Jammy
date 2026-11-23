@@ -57,111 +57,128 @@ th{text-align:left;font-size:11.5px;font-weight:700;color:var(--dim);padding:0 1
 td{padding:12px 12px 12px 0;border-bottom:1px solid var(--line);vertical-align:top;color:var(--dim)}
 td:first-child{color:var(--text);font-weight:600;width:34%}
 footer{border-top:1px solid var(--line);margin-top:50px;padding:28px 0 60px;color:var(--dim);font-size:14.5px}
-footer a{margin-right:16px}
+footer .wrap{display:flex;flex-wrap:wrap;gap:4px 16px}
+footer a{white-space:nowrap}
 </style>
 </head>
 <body>
 <nav><div class="wrap navin"><a class="word" href="index.html">Jammy</a><a class="back" href="index.html">Back to Jammy</a></div></nav>
 <div class="wrap">
-<header><h1>Privacy Policy</h1><div class="updated">Last updated 12 November 2026</div></header>
+<header><h1>Privacy Policy</h1><div class="updated">Last updated 23 November 2026</div></header>
 
 <div class="plain">
   <h2>The short version</h2>
-  <p>We collect what Jammy needs to work and nothing else. <strong>We do not sell your data, we do not share it with advertisers, and we never show anyone your exact location.</strong></p>
-  <p>Other musicians see how far away you are, never where you are. Rehearsal addresses are visible only to your own bandmates. You can download everything we hold on you, or delete your account entirely, at any time, from inside the app.</p>
+  <p>We collect what Jammy needs to work and nothing else. <strong>We do not sell your data and we do not give it to advertisers.</strong></p>
+  <p>Nobody on Jammy can see your date of birth or your coordinates — not other members, not through our app, and not by querying our database directly. Other musicians are shown how far away you are, never where you are. Rehearsal addresses are visible only to your own bandmates.</p>
+  <p>You can download everything we hold about you, or delete your account for good, from inside the app. Neither is hidden behind an email request.</p>
 </div>
 
-<p>This policy explains what Jammy collects, why, how long we keep it, and what rights you have. If anything here is unclear, email <a href="mailto:contact@jammy.social">contact@jammy.social</a> and we will answer in plain English.</p>
+<p>This policy describes what Jammy actually does today, not what it is planned to do. Where a thing is not built yet, it says so. If anything here is unclear, email <a href="mailto:contact@jammy.social">contact@jammy.social</a> and we will answer in plain English.</p>
 
 <h2>Who we are</h2>
-<p>Jammy is operated by <strong>Jammy LLC</strong>, a Washington limited liability company. For any privacy question, or to exercise any right described below, contact <a href="mailto:contact@jammy.social">contact@jammy.social</a>. Our registered agent's address is on file with the Washington Secretary of State and is available on request.</p>
+<p>Jammy is run by <strong>Stella Mae Saleh</strong>, in Washington State. A limited liability company, Jammy LLC, has been filed with the Washington Secretary of State and is awaiting approval. Until that approval comes through, the operator of Jammy is an individual, not a company, and we would rather say so than name a business that does not legally exist yet. This page will be updated on the day it does.</p>
+<p>For any privacy question, or to exercise any right described below, contact <a href="mailto:contact@jammy.social">contact@jammy.social</a>.</p>
 
 <h2>What we collect</h2>
 <table>
   <tr><th>What</th><th>Why</th></tr>
-  <tr><td>Email address or phone number</td><td>To create your account and sign you in. Never shown to other users.</td></tr>
-  <tr><td>Date of birth</td><td>To confirm you are 18 or over. Your age is never shown to anyone.</td></tr>
-  <tr><td>Name, handle, photo, bio</td><td>Your profile, visible to other users.</td></tr>
-  <tr><td>Instruments, genres, availability</td><td>To match you with complementary musicians.</td></tr>
-  <tr><td>Approximate location</td><td>To show musicians near you. <strong>Rounded to about one mile before it is stored.</strong></td></tr>
-  <tr><td>Recordings, photos and video you upload</td><td>To display on your profile, in posts, or in messages you send.</td></tr>
+  <tr><td>Email address or phone number</td><td>To create your account and sign you in with a one-time code. Never shown to other members.</td></tr>
+  <tr><td>Date of birth</td><td>To confirm you are 18 or over. It is stored once at signup, cannot be changed afterwards, and <strong>cannot be read by anyone but you</strong>.</td></tr>
+  <tr><td>Name, handle, photo, bio</td><td>Your profile, visible to other signed-in members.</td></tr>
+  <tr><td>Instruments, genres, availability</td><td>To match you with musicians who need what you play.</td></tr>
+  <tr><td>Approximate location</td><td>To show musicians near you. <strong>Rounded to about one mile on your device, before it is sent to us.</strong></td></tr>
+  <tr><td>Recordings, photos and video you upload</td><td>To show on your profile, in posts, on the radio, or in messages you send.</td></tr>
   <tr><td>Messages and comments</td><td>To deliver them to the people you send them to.</td></tr>
-  <tr><td>Bands, schedules and tasks</td><td>To run your band page. Practices are visible only to that band members.</td></tr>
-  <tr><td>Play counts and interactions</td><td>To build the weekly chart and show post counts.</td></tr>
-  <tr><td>Device token</td><td>To send push notifications, if you turn them on.</td></tr>
-  <tr><td>Basic technical logs</td><td>Security, debugging and abuse prevention.</td></tr>
+  <tr><td>Bands, schedules and tasks</td><td>To run your band page. Practices are visible only to that band's members.</td></tr>
+  <tr><td>Plays, likes and comments</td><td>To build the weekly chart and show counts on posts. A play is counted after fifteen seconds.</td></tr>
+  <tr><td>Who you swiped past, and who you blocked</td><td>So we do not show you the same person twice, and so a block holds.</td></tr>
+  <tr><td>Reports you make or receive</td><td>To act on them, and to recognise repeat behaviour.</td></tr>
 </table>
+
+<h2>What we do not collect</h2>
+<p>These are worth naming, because many apps like this one do collect them:</p>
+<ul>
+  <li><strong>No precise location.</strong> We ask your device for coarse accuracy only, and only while you are using the app — never in the background.</li>
+  <li><strong>No contacts, no calendar, no photo library.</strong> We only ever receive a file you choose to upload.</li>
+  <li><strong>No advertising or analytics trackers.</strong> There is no Google Analytics, no Meta pixel, no advertising SDK anywhere in Jammy.</li>
+  <li><strong>No push notifications, and no device tokens.</strong> Jammy does not send push notifications at all yet, so nothing identifying your device is stored.</li>
+  <li><strong>No automated scanning of what you upload.</strong> We want to be straight about this one: your photos and recordings are not checked by any automated system. Uploads are reviewed only when somebody reports them.</li>
+</ul>
 
 <h2>Location, specifically</h2>
 <p>Jammy is built around distance, so location matters more here than in most apps, and so does handling it carefully.</p>
 <ul>
-  <li>We ask for location permission once. If you decline, Jammy falls back to an approximate city-level estimate, or you can pick your city manually. <strong>The app works either way.</strong></li>
-  <li>We request <strong>coarse accuracy only</strong>, never precise positioning, and only while the app is in use. Never in the background.</li>
-  <li>Your coordinates are <strong>rounded to roughly one mile before they are stored</strong>, on your device, before they are sent anywhere.</li>
-  <li>Other users are shown a <strong>computed distance</strong> such as "3.1 miles away", and never your coordinates.</li>
-  <li>Rehearsal addresses attached to a band event are visible only to members of that band, and are never included in anything public.</li>
-</ul>
-
-<h2>What we never do</h2>
-<ul>
-  <li><strong>We do not sell your personal information</strong> to anyone, for any purpose.</li>
-  <li><strong>We do not share your data with advertisers.</strong> Advertisers choose a city and a genre; they never receive a list of who saw their ad.</li>
-  <li><strong>We do not use third-party tracking or advertising networks</strong> inside the app.</li>
-  <li><strong>We do not read your private messages</strong> except when a message is reported to us, in which case a moderator reviews only what was reported.</li>
+  <li>We ask for location permission once. If you say no, you pick your city by hand instead, and <strong>the app works either way</strong>.</li>
+  <li>We request <strong>coarse accuracy only</strong>, never precise positioning, and only while the app is open.</li>
+  <li>Your coordinates are <strong>rounded to roughly one mile on your own device</strong>, before they are sent to us. We never receive a precise position, so we could not reveal one even if we were compelled to.</li>
+  <li>Other members are shown a <strong>computed distance</strong> such as "3.1 miles away". The stored coordinate itself is readable by nobody — not other members, and not by any query a member could send to our database.</li>
+  <li>Rehearsal addresses attached to a band event are visible only to the members of that band, and are never included in anything public. A practice can never be made public, because the address is usually somebody's home.</li>
 </ul>
 
 <h2>Who can see what</h2>
 <ul>
-  <li><strong>Public to signed-in users:</strong> your name, handle, photo, bio, instruments, genres, public recordings, posts, and your approximate distance from them.</li>
-  <li><strong>Your band only:</strong> practice times and addresses, private recordings, band notes, and who agreed to bring what.</li>
-  <li><strong>Only the recipient:</strong> direct messages and jam clips you send.</li>
-  <li><strong>Only us:</strong> your email or phone, date of birth, and device information.</li>
+  <li><strong>Any signed-in member:</strong> your name, handle, photo, bio, city, instruments, genres, your public recordings and posts, and your approximate distance from them.</li>
+  <li><strong>Your band only:</strong> practice times and addresses, band recordings, band notes, and who agreed to bring what.</li>
+  <li><strong>Only the people in the conversation:</strong> direct messages, and audio clips sent inside a conversation.</li>
+  <li><strong>Only you:</strong> your date of birth and your stored coordinates.</li>
+  <li><strong>Only us:</strong> your email address or phone number, and reports you have made.</li>
 </ul>
+<p>These are enforced by the database itself, row by row and column by column, rather than by the app being polite. A member who went around our app and queried our database directly would get exactly the same answers.</p>
+
+<h2>Public files, and files that are not</h2>
+<p>Uploaded files fall into two groups and the difference matters.</p>
+<ul>
+  <li><strong>Audio clips sent inside a conversation are private.</strong> They are served through short-lived signed links, and only the people in that conversation can open them.</li>
+  <li><strong>Profile photos, post images and tracks you put on the radio are public by design.</strong> Anyone who has the file's web address can open it, including someone who is not signed in to Jammy. Treat anything you put on your profile or in a post as public.</li>
+</ul>
+<p>You can remove any file at any time, and we delete it from storage when you do.</p>
+
+<h2>What we never do</h2>
+<ul>
+  <li><strong>We do not sell your personal information</strong> to anyone, for any purpose.</li>
+  <li><strong>We do not give your data to advertisers.</strong> An advertiser chooses a city and a genre. They never receive a list of who saw their ad, and they have no way to query for one.</li>
+  <li><strong>We do not read your private messages</strong>, except when a message is reported to us, in which case we look at what was reported and nothing else.</li>
+</ul>
+<p>We do keep a record of which ads were shown and clicked, including which account they were shown to, so that we can tell an advertiser how many people saw their ad. That record stays with us.</p>
+
+<h2>Who else is involved</h2>
+<p>Running Jammy means a small number of other companies handle some of your data. These are all of them:</p>
+<ul>
+  <li><strong>Supabase</strong> — our database, sign-in and file storage. Everything described above is stored there.</li>
+  <li><strong>GitHub Pages</strong> — serves the app itself. Like any web host, it sees the internet address of visitors.</li>
+  <li><strong>Google Fonts</strong> — Jammy loads two typefaces from Google's font service, which means Google receives your internet address when a page loads. No account information is sent, and we do not use any other Google service.</li>
+</ul>
+<p>We may also disclose information if we are legally required to, or where it is necessary to protect someone from harm.</p>
 
 <h2>How long we keep it</h2>
 <ul>
-  <li><strong>While your account is open:</strong> your profile, posts, bands and messages.</li>
-  <li><strong>After you delete your account:</strong> your profile and content are removed within 30 days. Messages you sent may remain visible to the person who received them, in the same way a sent text does.</li>
-  <li><strong>Reports and safety records</strong> are kept for up to 12 months after they are resolved, so repeat behaviour can be identified.</li>
-  <li><strong>Technical logs</strong> are kept for up to 90 days.</li>
+  <li><strong>While your account is open:</strong> your profile, posts, recordings, bands and messages.</li>
+  <li><strong>When you delete your account:</strong> your profile and everything attached to it is deleted immediately, not queued for later. Messages you already sent remain visible to the people who received them, in the same way a sent text does.</li>
+  <li><strong>Reports:</strong> when the account involved is deleted, the report is kept but detached from the person, so a resolved safety matter does not vanish and a deleted person is not still named in it.</li>
+  <li><strong>Server logs:</strong> our hosting providers keep their own standard access logs. We do not run separate logging of our own, and we do not control how long theirs are retained.</li>
 </ul>
 
 <h2>Your rights</h2>
-<p>Wherever you live, Jammy gives every user the same rights:</p>
+<p>Wherever you live, Jammy gives every member the same rights:</p>
 <ul>
-  <li><strong>See your data.</strong> Settings, then Account and safety, then Download my data.</li>
-  <li><strong>Correct it.</strong> Edit your profile at any time.</li>
-  <li><strong>Delete it.</strong> Settings, then Delete account. Permanent, and not hidden behind an email request.</li>
-  <li><strong>Withdraw permissions.</strong> Turn off location or notifications in your phone settings; Jammy keeps working.</li>
+  <li><strong>See your data.</strong> Settings, then Account and safety, then Download my data. It includes your date of birth and your rounded coordinates, because they are yours.</li>
+  <li><strong>Correct it.</strong> Edit your profile at any time. Your date of birth is the exception: it is fixed at signup, so that an account cannot change its age later.</li>
+  <li><strong>Delete it.</strong> Settings, then Delete account. Permanent, immediate, and not hidden behind an email request.</li>
+  <li><strong>Withdraw permissions.</strong> Turn off location in your phone settings. Jammy keeps working.</li>
   <li><strong>Object or complain.</strong> Email us. If you are in the EU or UK you may also complain to your local data protection authority.</li>
 </ul>
-<p>If you are a California resident you have the rights described above under the CCPA, including the right not to be discriminated against for exercising them. We do not sell personal information, so there is nothing to opt out of.</p>
+<p>If you are a California resident, you have these rights under the CCPA, including the right not to be treated differently for using them. We are far below the size at which that law applies to a business, so we are giving you these rights because we think you should have them, not because we are required to.</p>
 
 <h2>Children</h2>
-<p>Jammy is <strong>18 and over</strong>. We ask for date of birth at signup and reject accounts below that age. We do not knowingly collect information from anyone under 18. If you believe a minor is using Jammy, email us and we will remove the account.</p>
-
-<h2>Who we share data with</h2>
-<p>Only the services needed to run the app, and only what they need:</p>
-<ul>
-  <li><strong>Supabase</strong> for database, authentication and file storage.</li>
-  <li><strong>Firebase Cloud Messaging</strong> for delivering push notifications.</li>
-  <li><strong>An automated content scanning service</strong> for checking uploaded images and audio.</li>
-  <li><strong>Apple and Google</strong> for app distribution and crash reporting.</li>
-</ul>
-<p>We may also disclose information if legally required to, or where necessary to protect someone from harm.</p>
+<p>Jammy is <strong>18 and over</strong>. We ask for your date of birth at signup, and the database itself refuses to create an account for anyone younger — it is a rule in the data, not a check that can be skipped. We do not knowingly collect information from anyone under 18. If you believe a minor is using Jammy, email us and we will remove the account.</p>
+<p>We are honest about the limit of this: a date of birth typed into a box is not proof of age, and we do not currently verify it further.</p>
 
 <h2>Security</h2>
-<p>Data is encrypted in transit and at rest. Access is controlled by row-level security rules, meaning private messages and band schedules are inaccessible even to someone holding the app public key.</p>
-<p>Uploaded files fall into two groups, and we want to be precise about the difference. Audio clips sent inside a conversation are private: they are served through short-lived signed links, and only the people in that conversation can open them. Profile photos, post images and tracks you add to the radio are public by design — they are meant to be seen — and anyone who has the file's web address can open it, including someone who is not signed in to Jammy. Treat anything you put on your profile or in a post as public. You can remove a file at any time, and we delete it when you do.</p>
-<p>No system is perfect. If we ever discover a breach affecting your data, we will tell you.</p>
+<p>Data is encrypted in transit and at rest. Access is controlled by rules held in the database — which rows you may read, and which columns — so private messages, band schedules, dates of birth and stored coordinates are inaccessible to other members no matter how they ask.</p>
+<p>No system is perfect, and Jammy is a young app built by one person. If we ever discover a breach affecting your data, we will tell you.</p>
 
 <h2>Changes</h2>
-<p>If we change this policy in a way that materially affects you, we will notify you in the app before the change takes effect.</p>
-
-<div class="plain" style="border-left-color:var(--amber)">
-  <h2>Before you publish this</h2>
-  <p><strong>This is a careful draft, not legal advice.</strong> It names Jammy LLC as the operator — <strong>do not publish it until that company actually exists</strong>, because naming an entity that hasn't been formed is itself a misrepresentation. Until then, either hold the page back or name yourself as the operator.</p><p>Have it read by a lawyer or a free law school clinic, and check every statement is still true of the app you ship. A privacy policy that overpromises is worse than none at all.</p>
-</div>
+<p>If we change this policy in a way that materially affects you, we will tell you in the app before the change takes effect. If we build something new — push notifications, automated scanning of uploads, anything that collects more than is listed above — this page will say so before it ships, not after.</p>
 
 <footer><div class="wrap" style="padding:0"><a href="index.html">Home</a><a href="privacy.html">Privacy</a><a href="terms.html">Terms</a><a href="advertise.html">Advertise</a><a href="mailto:contact@jammy.social">contact@jammy.social</a></div></footer>
 </div>

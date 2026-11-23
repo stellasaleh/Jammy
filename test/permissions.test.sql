@@ -92,3 +92,46 @@ select t('and hides the blocker from them, the half that was broken',
 select t('and keeps them out of each other''s Discover',
          not exists (select 1 from discover(0) where id = 'aaaaaaaa-0000-0000-0000-000000000001'));
 reset role;
+
+-- ------------------------------------------------------------
+--  COLUMNS, not just rows (23_columns.sql)
+--
+--  Row security says which ROWS you may read; it says nothing
+--  about which COLUMNS. Until 23_columns every table was granted
+--  to `authenticated` whole, so any member could ask the API for
+--  everyone's date of birth and for the stored coordinate — not
+--  the distance the app shows, the point itself. The privacy
+--  policy promised neither was ever visible. Now that is true.
+-- ------------------------------------------------------------
+set role app_user;
+set request.jwt.claim.sub = 'aaaaaaaa-0000-0000-0000-000000000001';
+
+select t('nobody can read anyone''s date of birth, mine included',
+         not has_column_privilege('app_user','profiles','birth_date','select'));
+
+select t('nor the stored coordinate',
+         not has_column_privilege('app_user','profiles','location','select'));
+
+select t('but the app can still tell whether the server has a location',
+         has_column_privilege('app_user','profiles','has_location','select'));
+
+select t('and can still read the things people put on their profile',
+         has_column_privilege('app_user','profiles','display_name','select')
+     and has_column_privilege('app_user','profiles','city','select')
+     and has_column_privilege('app_user','profiles','instruments','select'));
+
+select t('a location can still be written, it just cannot be read back',
+         has_column_privilege('app_user','profiles','location','update'));
+
+select t('a birthday cannot be changed after signup',
+         not has_column_privilege('app_user','profiles','birth_date','update'));
+
+select t('nobody can award themselves a verified mark',
+         not has_column_privilege('app_user','profiles','verified_at','update'));
+
+select t('nor lift their own ban',
+         not has_column_privilege('app_user','profiles','is_banned','update'));
+
+select t('and Discover still works, returning miles rather than a point',
+         exists (select 1 from discover(500)));
+reset role;

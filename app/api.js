@@ -121,6 +121,24 @@
   };
 
   /* ---------------- PROFILE ---------------- */
+  /* Every column an ordinary member is allowed to read. select("*") used
+     to be fine because the database handed out whole tables; since
+     23_columns.sql it does not, and "*" is refused outright.
+
+     `birth_date` and `location` are deliberately missing. Nobody reads
+     those two through the table — not even about themselves. Your own
+     date of birth comes back through export_my_data(), and has_location
+     answers the only question the app ever asks about the coordinate:
+     does the server have one yet. */
+  const PROFILE_COLUMNS = [
+    "id", "handle", "display_name", "bio", "city", "photo_path",
+    "instruments", "instrument_keys", "genres",
+    "looking_for", "looking_for_instruments", "influences",
+    "rehearsal_days", "remote_ok",
+    "verified_at", "is_banned", "terms_agreed_at", "created_at",
+    "has_location"
+  ].join(",");
+
   const profile = {
     /* call this once, right after the age gate and terms screen */
     async create(fields) {
@@ -140,22 +158,26 @@
           birth_date: fields.birthDate, // "1991-04-02"
           terms_agreed_at: new Date().toISOString(),
           remote_ok: fields.remoteOk !== false,
-        }).select().single()
+          /* birth_date may be WRITTEN once, here, at signup. It can
+             never be read back or changed — see 23_columns.sql. */
+        }).select(PROFILE_COLUMNS).single()
       );
     },
 
     mine: () =>
       call(async () => {
         const me = await uid();
-        return sb.from("profiles").select("*").eq("id", me).single();
+        return sb.from("profiles").select(PROFILE_COLUMNS).eq("id", me).single();
       }),
 
-    get: (id) => call(() => sb.from("profiles").select("*").eq("id", id).single()),
+    get: (id) =>
+      call(() => sb.from("profiles").select(PROFILE_COLUMNS).eq("id", id).single()),
 
     update: (patch) =>
       call(async () => {
         const me = await uid();
-        return sb.from("profiles").update(patch).eq("id", me).select().single();
+        return sb.from("profiles").update(patch).eq("id", me)
+                 .select(PROFILE_COLUMNS).single();
       }),
 
     /* Snap the location to ~1km before it ever leaves the device.

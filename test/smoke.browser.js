@@ -21,7 +21,11 @@ const FAKE_API = `
 const rows = {
   profile: {id:"u1",handle:"stella",display_name:"Stella Saleh",city:"Boston",
             instruments:["Trumpet"],genres:["Jazz"],looking_for:"Form a band",
-            rehearsal_days:["Wed"],location:"POINT(-71 42)",bio:""},
+            /* has_location, not location. Since 23_columns.sql the real
+               server never returns the coordinate to anybody, so a fake
+               that still hands one over is testing a server that no longer
+               exists, and the srvLoc path goes uncovered. */
+            rehearsal_days:["Wed"],has_location:true,bio:""},
   people: [{id:"p1",display_name:"Mina Okafor",handle:"minabass",city:"Boston",
             instruments:["Bass"],genres:["Jazz"],looking_for:"A band",bio:"",
             photo_path:null,miles:2.4,shared_genres:["Jazz"],they_need_me:["Trumpet"],

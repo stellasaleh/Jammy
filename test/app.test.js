@@ -39,7 +39,11 @@ function makeAPI(opts = {}) {
     profile: {
       create: async (f) => { log.push("createProfile:" + f.handle); return opts.createFails ? err(opts.createFails) : { data: { id: "u1", handle: f.handle, display_name: f.name, city: f.city, instruments: f.instruments, genres: f.genres, looking_for: f.lookingFor, rehearsal_days: f.days }, error: null }; },
       mine: async () => { log.push("loadMe"); return opts.profile ? { data: opts.profile, error: null } : { data: null, error: null }; },
-      setLocation: async () => { log.push("setLocation"); return { data: {}, error: null }; },
+      /* setLocationFails lets a test hold srvLoc still. Saving a location
+         successfully also sets it, so a test watching what the PROFILE
+         READ decided is otherwise racing the location detector that runs
+         a moment after boot. */
+      setLocation: async () => { log.push("setLocation"); return opts.setLocationFails ? err(opts.setLocationFails) : { data: {}, error: null }; },
       get: async () => ({ data: null, error: null }),
       update: async () => ({ data: null, error: null }),
     },
@@ -261,6 +265,52 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     profile: { id: "u1", handle: "stella", display_name: "Stella Saleh", city: "Boston", instruments: ["Trumpet"], genres: ["Jazz"], looking_for: "Form a band", rehearsal_days: ["Wed"] },
     people: PEOPLE,
   }, extra || {});
+
+  /* ------------------------------------------------------------
+     The server stopped handing out coordinates (23_columns.sql).
+     The app only ever wanted one bit from that column — does the
+     server know where I am — and it now reads that bit by name.
+     Checked here because the browser fakes could go on returning
+     a coordinate for months and nothing would have noticed.
+     ------------------------------------------------------------ */
+  console.log("\n8b. WHERE THE APP THINKS YOU ARE");
+  {
+    const { w } = await boot(true, signedIn({
+      profile: { id: "u1", handle: "stella", display_name: "Stella Saleh",
+                 city: "Boston", instruments: ["Trumpet"], genres: ["Jazz"],
+                 looking_for: "Form a band", rehearsal_days: ["Wed"],
+                 has_location: true },
+      setLocationFails: "offline",   /* so only the profile read can set it */
+    }));
+    await wait(260);
+    ok(w.__peek("srvLoc") === true,
+       "the app learns the server has your location from has_location");
+  }
+  {
+    const { w } = await boot(true, signedIn({
+      profile: { id: "u1", handle: "stella", display_name: "Stella Saleh",
+                 city: "Boston", instruments: ["Trumpet"], genres: ["Jazz"],
+                 looking_for: "Form a band", rehearsal_days: ["Wed"],
+                 has_location: false },
+      setLocationFails: "offline",
+    }));
+    await wait(260);
+    ok(w.__peek("srvLoc") === false,
+       "and knows when it does not, so Discover can say so");
+  }
+  {
+    /* the shape the server will never send again */
+    const { w } = await boot(true, signedIn({
+      profile: { id: "u1", handle: "stella", display_name: "Stella Saleh",
+                 city: "Boston", instruments: ["Trumpet"], genres: ["Jazz"],
+                 looking_for: "Form a band", rehearsal_days: ["Wed"],
+                 location: "POINT(-71 42)" },
+      setLocationFails: "offline",
+    }));
+    await wait(260);
+    ok(w.__peek("srvLoc") === false,
+       "and a raw coordinate is not treated as an answer");
+  }
 
   console.log("\n9. DISCOVER shows real people from the database");
   {

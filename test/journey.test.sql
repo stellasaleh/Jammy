@@ -60,8 +60,10 @@ select t('a signed-in person can create their own profile',
 
 -- the app stores a blunted location, never an exact one
 update profiles set location = 'SRID=4326;POINT(-71.06 42.36)' where id = auth.uid();
+-- read back through has_location, not the point itself: since 23_columns
+-- an ordinary member cannot select the coordinate at all, their own included
 select t('and can save their own location',
-         (select location is not null from profiles where id = auth.uid()));
+         (select has_location from profiles where id = auth.uid()));
 reset role;
 
 set role app_user;

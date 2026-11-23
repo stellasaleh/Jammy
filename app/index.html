@@ -6249,7 +6249,10 @@ function authMessage(e){
 /* A real profiles row from the database, adopted as "me". */
 function adoptProfile(r){
   if(!r)return;
-  srvLoc=!!r.location;
+  /* has_location, not location: since 23_columns.sql the coordinate
+     itself is unreadable through the table, and this flag is all the
+     app ever wanted from it — whether the server knows where you are. */
+  srvLoc=!!r.has_location;
   /* The database is the truth for the city. A stale value cached on one
      device must never win over a correction made somewhere else. */
   if(r.city&&S.me&&S.me.loc&&!r.location)S.me.loc.label=r.city;
