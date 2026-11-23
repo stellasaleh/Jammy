@@ -833,7 +833,7 @@ nav .nb{position:absolute;top:4px;right:calc(50% - 20px);background:var(--mag);c
 .ofoot .fine{font-size:11.5px;color:var(--dim);text-align:center;margin:10px 0 0;line-height:1.5}
 .btn[disabled]{opacity:.35;pointer-events:none}
 .splash{flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:6px;padding:0 10px}
-.splash .lw{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:58px;letter-spacing:-.05em;line-height:1;
+.splash .lw{margin:0;font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:58px;letter-spacing:-.05em;line-height:1;
   background:var(--ombre);-webkit-background-clip:text;background-clip:text;color:transparent}
 .splash p{color:var(--dim);font-size:16.5px;max-width:28ch;margin:8px 0 0}
 .splash .free{margin-top:18px;font-size:13px;font-weight:600;color:var(--mag);border:1px solid rgba(229,40,92,.4);
@@ -880,7 +880,11 @@ nav .nb{position:absolute;top:4px;right:calc(50% - 20px);background:var(--mag);c
   display:grid;place-items:center;font-size:13px;font-weight:700}
 .rule b{display:block;font-size:14.5px;margin-bottom:2px}
 .rule span{font-size:13px;color:var(--dim);line-height:1.45}
-.agree{display:flex;gap:11px;align-items:flex-start;padding:13px;border-radius:14px;background:var(--surface);border:1px solid var(--line)}
+.agree{display:flex;gap:11px;align-items:flex-start;padding:13px;border-radius:14px;
+  background:var(--surface);border:1px solid var(--line);
+  width:100%;text-align:left;color:inherit;font:inherit;cursor:pointer}
+.agree:focus-visible{outline:2px solid var(--mag);outline-offset:2px}
+.agree p{margin:0}
 .agree .box{width:22px;height:22px;flex:none;border-radius:7px;border:1.5px solid var(--dim);display:grid;place-items:center;margin-top:1px}
 .agree.on .box{background:var(--mag);border-color:var(--mag)}
 .agree .box svg{width:13px;height:13px;stroke:#fff;fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;opacity:0}
@@ -1950,6 +1954,15 @@ let realAudio=null, realPlayedFor=0, realTimer=null, realTrackId=null;
    server would discard. Change one and you must change the other. */
 const PLAY_COUNTS_AT=15;
 
+/* CSS.escape is missing from some older Android WebViews, and Jammy ships
+   inside a WebView. Without a fallback the play buttons throw there and
+   nothing on the radio responds. */
+function cssEsc(v){
+  v=String(v==null?"":v);
+  if(window.CSS&&typeof CSS.escape==="function")return CSS.escape(v);
+  return v.replace(/[^a-zA-Z0-9_-]/g,ch=>"\\"+ch);
+}
+
 /* What identifies the thing currently playing. Every play button carries
    this in data-play, and play() sets nowPlaying to it, so the two have to
    be worked out the same way — otherwise the button's icon never flips to
@@ -1975,7 +1988,7 @@ function playReal(track,artist,uid){
   $("#mp-title").textContent=track.title;
   $("#mp-by").textContent=[artist.name,track.key,track.bpm?track.bpm+" bpm":""].filter(Boolean).join(" · ");
   $("#mp-btn").innerHTML=ICON_PAUSE;
-  document.querySelectorAll(`[data-play="${CSS.escape(uid)}"]`).forEach(b=>b.innerHTML=ICON_PAUSE);
+  document.querySelectorAll(`[data-play="${cssEsc(uid)}"]`).forEach(b=>b.innerHTML=ICON_PAUSE);
 
   realAudio=new Audio(url);
   realAudio.onended=()=>{reportPlay();stopAudio()};
@@ -2021,7 +2034,7 @@ function play(track,artist){
   $("#mp-title").textContent=track.title;
   $("#mp-by").textContent=artist.name+" · "+track.key+" · "+track.bpm+" bpm";
   $("#mp-btn").innerHTML=ICON_PAUSE;
-  document.querySelectorAll(`[data-play="${CSS.escape(uid)}"]`).forEach(b=>b.innerHTML=ICON_PAUSE);
+  document.querySelectorAll(`[data-play="${cssEsc(uid)}"]`).forEach(b=>b.innerHTML=ICON_PAUSE);
   const root=rootOf(track.key),sc=scaleOf(track.key),r=rng(hash(uid)),step=60/track.bpm/2,steps=64;
   const pat=Array.from({length:8},()=>sc[Math.floor(r()*sc.length)]);
   const out=actx.createGain();out.gain.value=.15;
@@ -2043,7 +2056,7 @@ function play(track,artist){
     i++;if(i>=steps)stopAudio();
   }
   tick();loopT=setInterval(tick,step*1000);
-  const waves=document.querySelectorAll(`[data-wave="${CSS.escape(uid)}"]`);
+  const waves=document.querySelectorAll(`[data-wave="${cssEsc(uid)}"]`);
   if(waves.length){
     const total=steps*step*1000,t0=performance.now();
     const frame=t=>{const prog=Math.min(1,(t-t0)/total);
@@ -2077,7 +2090,7 @@ function connected(id){return S.connections.includes(id)}
 /* The cursor is the last row's time AND its id together. Two posts written
    in the same second share a timestamp, and on a tie a time-only cursor
    skips every post on the boundary, silently, with no gap to see. */
-let feedCursor=null, feedCursorId=null, feedEnd=false, feedLoading=false;
+let feedCursor=null, feedCursorId=null, feedEnd=false, feedLoading=false, feedFailed=false;
 
 /* A row from feed_page() in the shape the screen already draws. The author
    is remembered the same way Discover remembers people, so their name and
@@ -2121,7 +2134,16 @@ async function loadFeed(more){
   feedLoading=true;
   const r=await DB.feedPage(more?feedCursor:null,20,more?feedCursorId:null);
   feedLoading=false;
-  if(r.error){toast(authMessage(r.error));return}
+  if(r.error){
+    /* "No posts yet" and "we couldn't reach the server" are different
+       sentences, and showing the first one when the second is true
+       tells a new person the app is dead. Remember which it was. */
+    feedFailed=!more&&!LIVEPOSTS.length;
+    toast(authMessage(r.error));
+    if(feedFailed)renderFeed();
+    return;
+  }
+  feedFailed=false;
   const rows=(r.data||[]).map(dbRowToPost);
   LIVEPOSTS=more?LIVEPOSTS.concat(rows):rows;
   feedEnd=rows.length<20;
@@ -2456,6 +2478,16 @@ function renderFeed(){
   f.appendChild(tabs);
 
   const posts=feedFiltered();
+  if(!posts.length&&feedFailed&&LIVE){
+    f.appendChild(el("div","empty",
+      `<h3>Can't reach Jammy right now</h3>
+       <p>This is a connection problem, not an empty feed. Check your signal and try again.</p>`));
+    const again=el("button","btn ghost","Try again");
+    again.style.cssText="width:calc(100% - 32px);margin:0 16px";
+    again.onclick=()=>{feedFailed=false;renderFeed();loadFeed()};
+    f.appendChild(again);
+    renderStories();return;
+  }
   if(!posts.length){
     f.appendChild(el("div","empty",
       feedTab==="mine"
@@ -2967,6 +2999,20 @@ function loadDeckSoon(){
    somebody who just wants to hear live music finds a gig tonight. */
 function discoverMode(){return S.discMode==="gigs"?"gigs":"people"}
 
+/* A screen that shows "Loading…" because somebody else was supposed to
+   have fetched its data will show it forever if they did not. Each screen
+   asks for what it needs when it is opened and finds nothing — once, and
+   only when nothing is already in flight. */
+function ensureScreenData(view){
+  if(!LIVE)return;
+  if(view==="radio"){
+    if(LIVECHART===null&&!chartLoading)loadChart();
+    if(RISING===null&&!risingLoading)loadRising();
+  }
+  if(view==="feed"&&!LIVEPOSTS.length&&!feedLoading&&feedCursor===null)loadFeed();
+  if(view==="disc"&&discoverMode()==="gigs"&&LIVEGIGS===null&&!gigsLoading)loadGigs();
+}
+
 function refreshDiscover(){
   const gigMode=discoverMode()==="gigs";
   const ctx=$("#ctx");
@@ -3122,7 +3168,11 @@ function renderDeck(){
       e2.appendChild(b);
       const b2=el("button","btn ghost","Edit my city instead");
       b2.style.cssText="margin-top:9px";
-      b2.onclick=()=>{go("you");setTimeout(()=>editProfile&&editProfile(),120)};
+      /* This called editProfile(), which does not exist anywhere in the
+         app — the editor is openEdit(). Pressing it went to the profile
+         tab and then threw, on the one screen a new person reaches when
+         Jammy cannot find anybody near them. */
+      b2.onclick=()=>{go("you");setTimeout(openEdit,120)};
       e2.appendChild(b2);
       d.appendChild(e2);
       return;
@@ -3370,7 +3420,7 @@ let lbTab="week";
    demo — invented tracks, invented play counts, a made-up position change.
    Signed in, every number on this screen is a true one, including when the
    true one is nothing. */
-let LIVECHART=null, LIVELISTENERS=0, chartLoading=false;
+let LIVECHART=null, LIVELISTENERS=0, chartLoading=false, chartStall=null;
 
 async function loadChart(){
   if(!LIVE||chartLoading)return;
@@ -3418,11 +3468,32 @@ function renderRadio(){
      yet. It used to show invented tracks instead, under a banner reading
      "2,140 LISTENING" when the true number was nobody. */
   if(!top){
+    if(LIVE&&LIVECHART===null){
+      r.appendChild(el("div","empty",`<p style="font-size:13.5px">Loading the chart…</p>`));
+      /* and if it is still loading in eight seconds, say something true
+         instead of leaving the word "Loading" on the screen for good */
+      clearTimeout(chartStall);
+      chartStall=setTimeout(()=>{
+        if(LIVECHART===null&&$("#v-radio")&&$("#v-radio").classList.contains("on")){
+          const host=$("#radio");if(!host)return;
+          host.innerHTML="";
+          host.appendChild(el("div","empty",
+            `<h3>Can't reach the chart</h3><p>Check your connection and try again.</p>`));
+          const again=el("button","btn ghost","Try again");
+          again.style.cssText="width:calc(100% - 32px);margin:0 16px";
+          again.onclick=()=>{LIVECHART=null;renderRadio();loadChart()};
+          host.appendChild(again);
+        }
+      },8000);
+      return;
+    }
     r.appendChild(el("div","empty",
-      LIVE&&LIVECHART===null
-      ? `<p style="font-size:13.5px">Loading the chart…</p>`
-      : `<h3>Nothing on the chart yet</h3>
-         <p>The chart is built from what people actually play. Put a recording on your profile and it can land here — every play from Jammy Radio or someone's profile counts.</p>`));
+      `<h3>Nothing on the chart yet</h3>
+       <p>The chart is built from what people actually play. Put a recording on your profile and it can land here — every play from Jammy Radio or someone's profile counts.</p>`));
+    const up=el("button","btn","Upload a track");
+    up.style.cssText="width:calc(100% - 32px);margin:0 16px";
+    up.onclick=()=>openUpload();
+    r.appendChild(up);
     return;
   }
 
@@ -3652,10 +3723,18 @@ function dbRowToMsg(m){
 
 /* Pull the message list. This also rebuilds who you're connected to, since
    a match always creates a conversation — they're the same fact. */
+let convosFailed=false;
 async function loadConvos(){
   if(!LIVE)return;
   const r=await DB.convos();
-  if(r.error)return;
+  if(r.error){
+    /* This used to return in silence, so a person whose messages failed
+       to load was shown an empty Chats tab and told nothing. Somebody
+       waiting to hear back from a drummer would decide they had been
+       ignored. */
+    convosFailed=true;renderChats();return;
+  }
+  convosFailed=false;
   LIVECONVOS=r.data||[];
   CONVOID={};
   const seen=[];
@@ -3734,6 +3813,17 @@ function stopWatchingThread(){
 function renderChats(){
   const c=$("#chats");c.innerHTML="";
 
+  if(LIVE&&convosFailed){
+    const warn=el("div","empty",
+      `<h3>Can't reach your messages</h3>
+       <p>Your conversations are safe — this device just couldn't load them. It isn't that nobody has written.</p>`);
+    c.appendChild(warn);
+    const again=el("button","btn ghost","Try again");
+    again.style.cssText="width:calc(100% - 32px);margin:0 16px 8px";
+    again.onclick=()=>{convosFailed=false;renderChats();loadConvos()};
+    c.appendChild(again);
+  }
+
   if(LIVE&&REQUESTS.length){
     c.appendChild(el("div","sechead",
       `<h2>Requests</h2><span class="reqn">${REQUESTS.length}</span>`));
@@ -3783,9 +3873,10 @@ function renderChats(){
   }
 
   c.appendChild(el("div","sechead",`<h2>Bands</h2>`));
-  /* Bands aren't wired to the database yet. Showing the four written-in
-     demo bands to someone with a real account would be a lie, so in live
-     mode the section says so instead. */
+  /* Band chats come from the server now (LIVECONVOS carries them), so
+     live mode lists real bands. The four written-in demo bands below are
+     for the signed-out demo only: showing them to someone with a real
+     account would be a lie about who they play with. */
   if(LIVE){
     const liveBands=LIVECONVOS.filter(r=>r.kind==="band");
     if(!liveBands.length){
@@ -3872,14 +3963,20 @@ function openChat(id,band){
       return;
     }
   }
+  /* The other side may be gone — account deleted, or a conversation
+     opened from a notification before the profile has loaded. The
+     messages are still yours to read, so open the thread with a
+     placeholder rather than throwing and leaving the tap dead. */
   if(band){
     const b=Bnd(id);
-    $("#ch-av").innerHTML=avatarOf(A(b.members[0]));
-    $("#ch-name").textContent=b.name;$("#ch-sub").textContent=b.about;
+    $("#ch-av").innerHTML=b?avatarOf(A(b.members[0])):`<span class="ph">${esc(initials("Band"))}</span>`;
+    $("#ch-name").textContent=b?b.name:"Band";
+    $("#ch-sub").textContent=b?b.about:"Band chat";
   }else{
     const p=A(id);
-    $("#ch-av").innerHTML=avatarOf(p);
-    $("#ch-name").textContent=p.name;$("#ch-sub").textContent=p.role+" · "+p.city;
+    $("#ch-av").innerHTML=p?avatarOf(p):`<span class="ph">${esc(initials("?"))}</span>`;
+    $("#ch-name").textContent=p?p.name:"Someone";
+    $("#ch-sub").textContent=p?(p.role+" · "+p.city):"This person is no longer on Jammy";
   }
   msgShown=MSG_WINDOW;
   renderMsgs();
@@ -3921,11 +4018,22 @@ function renderMsgs(){
     if(m.sending)d.classList.add("sending");
     if(m.failed)d.classList.add("failed");
     if(m.failed){
+      /* Retrying must not need a finger. A bubble with an onclick and
+         nothing else is invisible to a keyboard and silent to a screen
+         reader, so the only people who could resend a failed message
+         were the ones using a mouse or a touchscreen. */
       d.title="Tap to try again";
-      d.onclick=()=>{
+      d.setAttribute("role","button");
+      d.setAttribute("tabindex","0");
+      d.setAttribute("aria-label","Message not sent"+(m.why?": "+m.why:"")+". Press to try again.");
+      const retry=()=>{
         const list=S.threads[chatId]||[];
         const i=list.indexOf(m);if(i>-1)list.splice(i,1);
         save();renderMsgs();sendMsg(m.t,m.attach);
+      };
+      d.onclick=retry;
+      d.onkeydown=e=>{
+        if(e.key==="Enter"||e.key===" "||e.key==="Spacebar"){e.preventDefault();retry()}
       };
     }
     d.innerHTML=(isBand&&who?`<span class="who">${esc(who.name.split(" ")[0])}</span>`:"")+esc(m.t)+
@@ -4589,8 +4697,8 @@ function stopClip(){
   if(clipRaf)cancelAnimationFrame(clipRaf);clipRaf=null;
   if(clipAudio){clipAudio.pause();clipAudio=null}
   if(clipPlayingId){
-    document.querySelectorAll(`[data-clip="${CSS.escape(clipPlayingId)}"]`).forEach(b=>b.innerHTML=ICON_PLAY);
-    document.querySelectorAll(`[data-clipwave="${CSS.escape(clipPlayingId)}"] i`).forEach(b=>b.classList.remove("hit"));
+    document.querySelectorAll(`[data-clip="${cssEsc(clipPlayingId)}"]`).forEach(b=>b.innerHTML=ICON_PLAY);
+    document.querySelectorAll(`[data-clipwave="${cssEsc(clipPlayingId)}"] i`).forEach(b=>b.classList.remove("hit"));
   }
   clipPlayingId=null;
 }
@@ -4940,7 +5048,9 @@ function openReport(id){
       <span class="sw"></span></div>
     <button class="btn" id="rp-send" style="width:100%;margin-top:12px" disabled>Send report</button>
     <button class="btn ghost" id="rp-blockonly" style="width:100%;margin-top:9px">Just block, don't report</button>
-    <p class="dimtext" style="font-size:11.5px;margin:12px 0 0;line-height:1.5">In this prototype your report is stored on this device only — there's no server yet. In the live app it reaches a moderator within 24 hours, and we'll tell you the outcome.</p>`;
+    <p class="dimtext" style="font-size:11.5px;margin:12px 0 0;line-height:1.5">${LIVE
+      ? "Your report is sent to us and read by a person, normally within 24 hours, and we'll tell you the outcome. Blocking takes effect straight away, whatever we decide."
+      : "You're looking at the demo, so this report stays on this device and reaches nobody. Sign in and it goes to a person who reads it."}</p>`;
   $("#sheet").classList.add("on");
   let reason=null;
   sb.querySelectorAll("[data-r]").forEach(o=>o.onclick=()=>{
@@ -5452,14 +5562,18 @@ function openAddBand(){
 }
 
 function openClip(bandId,c,member){
-  const b=Bnd(bandId),sb=$("#sheetbody"),pub=mediaVis(c)==="public";
+  const b=Bnd(bandId)||{id:bandId,name:"Band"};
+  const sb=$("#sheetbody"),pub=mediaVis(c)==="public";
+  /* There is no player behind this yet. A play triangle that does
+     nothing when pressed is worse than no triangle: the person taps it
+     twice, decides the app is broken, and never finds out that nothing
+     was supposed to happen. Say it instead of implying it. */
   sb.innerHTML=`<div class="grabber"></div>
     <div class="clipbig">${art(hash(b.id+c.id),"",{k:"cl"})}
-      <span class="pl">${ICON_PLAY}</span>
       <span class="dur">${esc(c.len||"")}</span></div>
     <h2 style="font-size:20px;margin:12px 0 3px">${esc(c.title)}</h2>
     <p class="dimtext" style="font-size:13px;margin:0 0 10px">${CLIP_LABEL[c.kind]||"Clip"} · ${esc(b.name)} · ${visBadge({id:c.id,type:"clip",vis:c.vis})}</p>
-    <p class="dimtext" style="font-size:12.5px;margin:0 0 14px">Video playback isn't wired up in this prototype — the player arrives with file storage. Everything around it is real.</p>
+    <p class="dimtext" style="font-size:12.5px;margin:0 0 14px">There's no video player in Jammy yet, so this clip can't be watched here — only named, shared with the band and deleted. Audio you post to the radio does play.</p>
     ${member?`<button class="btn ghost" id="cl-priv" style="width:100%">${pub?"Make members only":"Announce publicly"}</button>
       <button class="btn ghost" id="cl-del" style="width:100%;margin-top:9px;color:var(--mag)">Delete clip</button>`:""}`;
   $("#sheet").classList.add("on");
@@ -5520,7 +5634,9 @@ function openMyReports(){
   const sb=$("#sheetbody"),list=S.reports||[];
   sb.innerHTML=`<div class="grabber"></div>
     <h2 style="font-size:21px;margin-bottom:4px">Your reports</h2>
-    <p class="dimtext" style="font-size:13.5px;margin:0 0 12px">${list.length?"Stored on this device in the prototype. In the live app each one is read by a moderator within 24 hours and you're told the outcome.":"You haven't reported anyone."}</p>
+    <p class="dimtext" style="font-size:13.5px;margin:0 0 12px">${!list.length?"You haven't reported anyone."
+      :LIVE?"Each one was sent to us and is read by a person, normally within 24 hours. We'll tell you the outcome."
+      :"You're in the demo, so these stayed on this device and reached nobody."}</p>
     ${list.map(r=>{const p=A(r.id);
       return `<div class="inforow"><span>${esc(p?p.name:r.id)}</span><span>${esc(r.reason||"unspecified")} · ${esc(dayPhrase(r.at).toLowerCase())}</span></div>`}).join("")}`;
   $("#sheet").classList.add("on");
@@ -5533,7 +5649,7 @@ function openAccount(){
     <div class="inforow"><span>Age</span><span>18+ verified at signup</span></div>
     <div class="inforow"><span>Terms accepted</span><span>${a.agreedAt?esc(new Date(a.agreedAt).toLocaleDateString()):"—"}</span></div>
     <div class="inforow"><span>Location</span><span>${esc(myLoc().label)} · neighbourhood level</span></div>
-    <div class="inforow"><span>Data stored</span><span>This device only, in this prototype</span></div>
+    <div class="inforow"><span>Data stored</span><span>${LIVE?"On your device and on Jammy's server":"On this device only, in the demo"}</span></div>
     <p class="dimtext" style="font-size:12.5px;margin:14px 0 0;line-height:1.55">Jammy shows your approximate distance to other users, never your exact location. Rehearsal addresses are visible only to your bandmates.</p>
     <button class="btn ghost" id="ac-export" style="width:100%;margin-top:14px">Download my data</button>`;
   $("#sheet").classList.add("on");
@@ -5804,6 +5920,7 @@ function go(v){
   if(v!=="you"){$("#bandlist").classList.remove("on");$("#bandview").classList.remove("on")}
   const fab=$("#fab");
   if(fab)fab.hidden=!(v==="feed"||v==="you");
+  ensureScreenData(v);
   if(v==="feed")renderFeed();if(v==="disc")refreshDiscover();if(v==="radio")renderRadio();
   if(v==="chats"){renderChats();if(LIVE){loadConvos();loadRequests();loadBandRequests()}}if(v==="you")renderYou();
 }
@@ -6400,17 +6517,37 @@ function renderStep(){
         <div class="rule"><span class="n">3</span><div><b>Report what doesn't belong</b><span>Every profile, post and message has a report button. A human reads every report within 24 hours.</span></div></div>
         <div class="rule"><span class="n">4</span><div><b>This is for playing music</b><span>Not a marketplace, not a dating app. Connect with people you'd actually want in a rehearsal room.</span></div></div>
       </div>
-      <div class="agree" id="ob-agree"><span class="box"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 12.5l5.5 5.5L20 7"/></svg></span>
-        <p>I'm 18 or older, and I agree to the Terms of Service, Privacy Policy, and a zero-tolerance policy on abusive content and behaviour.</p></div>`;
+      <button type="button" class="agree" id="ob-agree" role="checkbox" aria-checked="false">
+        <span class="box"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 12.5l5.5 5.5L20 7"/></svg></span>
+        <p>I'm 18 or older, and I agree to the Terms of Service, Privacy Policy, and a zero-tolerance policy on abusive content and behaviour.</p></button>
+      <p class="sub" id="ob-agreehint" style="margin-top:9px;font-size:13px">Tick the box above to continue.</p>`;
     foot.innerHTML=`<button class="btn" id="ob-next" disabled>Agree and continue</button>`;
-    const ag=$("#ob-agree"),next=$("#ob-next");
-    ag.onclick=()=>{obDraft.agreed=!obDraft.agreed;ag.classList.toggle("on",obDraft.agreed);next.disabled=!obDraft.agreed};
-    next.onclick=()=>finishOnboarding();
+    const ag=$("#ob-agree"),next=$("#ob-next"),hint=$("#ob-agreehint");
+    /* This was a <div> with an onclick: no keyboard focus, no role, and
+       nothing announced to a screen reader. It is the one gate everybody
+       has to pass to use Jammy at all, so anyone not using a mouse or a
+       touchscreen could not sign up. A button gets Enter and Space, a
+       focus ring and the right announcement for free. */
+    const setAgreed=v=>{
+      obDraft.agreed=v;
+      ag.classList.toggle("on",v);
+      ag.setAttribute("aria-checked",v?"true":"false");
+      next.disabled=!v;
+      if(hint)hint.style.visibility=v?"hidden":"visible";
+    };
+    setAgreed(!!obDraft.agreed);
+    ag.onclick=()=>setAgreed(!obDraft.agreed);
+    next.onclick=()=>{
+      /* and if it is somehow pressed while unticked, say why rather than
+         doing nothing at all */
+      if(!obDraft.agreed){toast("Tick the box to agree first");return}
+      finishOnboarding();
+    };
   }
 
   else if(st.id==="done"){
     body.innerHTML=`<div class="splash">
-      <div class="lw">Welcome</div>
+      <h1 class="lw">Welcome</h1>
       <p>Your card is live. ${(obDraft.instruments[0]||"Musicians").toString()} players near ${obDraft.city||"you"} can find you now.</p>
       <div class="free">Free. No subscription, ever.</div></div>`;
     foot.innerHTML=`<button class="btn" id="ob-next">Start looking</button>
