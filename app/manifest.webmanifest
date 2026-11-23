@@ -1,7 +1,7 @@
 {
   "name": "Jammy",
   "short_name": "Jammy",
-  "description": "Find musicians, form bands, jam over video.",
+  "description": "Find musicians near you, start a band, book rehearsals and gigs, and hear what local players are recording.",
   "start_url": "./index.html",
   "display": "standalone",
   "orientation": "portrait",
