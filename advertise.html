@@ -336,7 +336,14 @@ footer a{color:var(--mag);text-decoration:none}
   </footer>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<!-- The same supabase-js 2.118.0 the app bundles, served from this site
+     rather than fetched from a CDN. It used to load "@2" from jsDelivr,
+     which means whatever the latest 2.x happens to be that day, with no
+     integrity check — so a bad release, or a bad day at the CDN, would
+     have run somebody else's code on this page, right before the page
+     loads our keys. Now the file ships with the site and cannot change
+     underneath us. -->
+<script src="app/supabase.js"></script>
 <script src="config.js"></script>
 <script>
 "use strict";

@@ -1072,7 +1072,13 @@ const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=nu
 function hash(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return Math.abs(h)}
 function rng(seed){let s=(seed%2147483646)+1;return()=>((s=s*16807%2147483647)-1)/2147483646}
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const initials=n=>String(n||"?").trim().split(/\s+/).map(w=>w[0]||"").join("").slice(0,2).toUpperCase()||"?";
+/* The result goes straight into innerHTML in several places, and the
+   first letter of a name is whatever the person typed. A display name
+   beginning "<" produced a bare "<" in the markup, which starts a tag
+   and swallows what follows. It cannot run a script, but it can mangle
+   a page, so keep this to letters and digits. */
+const initials=n=>String(n||"?").trim().split(/\s+/)
+  .map(w=>(w.match(/[\p{L}\p{N}]/u)||[""])[0]).join("").slice(0,2).toUpperCase()||"?";
 const nfmt=n=>n>=1e6?(n/1e6).toFixed(1)+"M":n>=1e3?(n/1e3).toFixed(1)+"k":String(n);
 let toastT;function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("on");clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove("on"),2000)}
 
@@ -1100,7 +1106,7 @@ function avatarOf(p){
   return art(hash(p.id||p.name||"unknown"),initials(p.name||"?"),{size:150,k:"a"});
 }
 function meAvatar(px){
-  if(S.me.photo)return `<img src="${S.me.photo}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">`;
+  if(S.me.photo)return `<img src="${esc(S.me.photo)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">`;
   return art(hash((S.me.name||"You")+"me"),initials(S.me.name||"You"),{k:"a",size:px?px*4:150});
 }
 
@@ -2375,7 +2381,7 @@ function openAdvertise(){
     if(!/^image\//.test(f.type))return toast("That file isn't an image");
     $("#ad-imghint").textContent="Processing…";
     try{const out=await shrinkImage(f,1000,0.8);image=out.url;
-      $("#ad-imgprev").innerHTML=`<div class="attached"><img src="${image}" alt=""><div class="at"><b>Image attached</b></div></div>`;
+      $("#ad-imgprev").innerHTML=`<div class="attached"><img src="${esc(image)}" alt=""><div class="at"><b>Image attached</b></div></div>`;
       $("#ad-imghint").textContent="Tap to replace";
     }catch(e){toast("Couldn't read that image");$("#ad-imghint").textContent="A flyer, your room, your product"}
     $("#ad-img").value="";
@@ -2452,7 +2458,7 @@ function adEl(ad){
       <div class="pn"><b>${esc(ad.sponsor)}</b><span>${ad.kind==="venue"?"Booking · looking for players":"Paid partnership"}</span></div></div>
     <p class="ptxt" style="font-weight:600">${esc(ad.headline)}</p>
     <p class="ptxt dimtext" style="font-size:14px">${esc(ad.body)}</p>
-    ${ad.image?`<div class="admedia"><img src="${ad.image}" alt=""></div>`:""}
+    ${ad.image?`<div class="admedia"><img src="${esc(ad.image)}" alt=""></div>`:""}
     <button class="btn ${ad.kind==="venue"?"":"amber"}" data-ad="${ad.id}">${esc(ad.cta)}</button>
     <button class="advlink" data-advertise="1">Advertise on Jammy</button>`;
   logImpression(ad.id);
@@ -2828,7 +2834,7 @@ function composerForm(kind,editing){
     const host=$("#cp-mediaprev");
     if(!media){host.innerHTML="";$("#cp-attachhint").textContent="A flyer, your gear, thirty seconds of the room";return}
     host.innerHTML=`<div class="attached">
-        ${media.poster?`<img src="${media.poster}" alt="">`:`<div class="noposter">${art(hash(media.id),"",{k:"pm"})}</div>`}
+        ${media.poster?`<img src="${esc(media.poster)}" alt="">`:`<div class="noposter">${art(hash(media.id),"",{k:"pm"})}</div>`}
         <div class="at"><b>${media.kind==="video"?"Video":"Photo"} attached</b>
           <span>${media.kind==="video"&&media.dur?mmss(media.dur)+" · ":""}${Math.max(1,Math.round((media.size||0)/1024))} KB</span></div>
         <button class="atrm" id="cp-rmmedia" aria-label="Remove attachment">
@@ -4200,7 +4206,7 @@ function renderYou(){
   const totalPlays=(me.tracks||[]).reduce((n,t)=>n+t.plays+(S.plays["me:"+t.title]||0)*137,0);
   y.innerHTML="";
   const hero=el("div","hero-profile",
-    (me.cover?`<img src="${me.cover}" alt="" class="coverimg">`:art(hash((me.name||"You")+"me"),"",{k:"h"}))
+    (me.cover?`<img src="${esc(me.cover)}" alt="" class="coverimg">`:art(hash((me.name||"You")+"me"),"",{k:"h"}))
     +`<div class="fade"></div>
       <button class="covedit" id="cov-edit" aria-label="Change cover photo">
         <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="M4 17l5-4.5 4 3.5 3-2.5 4 3.5"/></svg></button>`);
@@ -4461,7 +4467,7 @@ function openPhotos(){
 
     <div class="phsec">
       <div class="phlabel">Cover photo</div>
-      <div class="covprev" id="cov-prev">${me.cover?`<img src="${me.cover}" alt="">`:art(hash((me.name||"You")+"me"),"",{k:"h"})}</div>
+      <div class="covprev" id="cov-prev">${me.cover?`<img src="${esc(me.cover)}" alt="">`:art(hash((me.name||"You")+"me"),"",{k:"h"})}</div>
       <div class="phbtns">
         <label class="minibtn" for="cov-file">${me.cover?"Replace":"Add cover"}<input type="file" id="cov-file" accept="image/*" hidden></label>
         ${me.cover?`<button class="minibtn" id="cov-rm">Remove</button>`:""}
@@ -4615,7 +4621,7 @@ async function loadMyTracks(){
 /* ================= BANDS ================= */
 function bandArt(b){
   const ph=(S.bandPhotos||{})[b.id];
-  if(ph)return `<img src="${ph}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">`;
+  if(ph)return `<img src="${esc(ph)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">`;
   return art(hash("band"+b.id),initials(b.name),{size:150,k:"b"});
 }
 
@@ -4950,7 +4956,7 @@ function mediaBlock(m){
      every device. m.poster is the local copy the demo makes on this phone. */
   const src=m.poster||(m.kind!=="video"?m.url:null)||null;
   return `<div class="pmedia" data-media="${esc(m.id)}" style="padding-bottom:${pad.toFixed(1)}%">
-    ${src?`<img src="${src}" alt="${m.kind==="video"?"Video":"Photo"} attached to this post" loading="lazy">`
+    ${src?`<img src="${esc(src)}" alt="${m.kind==="video"?"Video":"Photo"} attached to this post" loading="lazy">`
              :`<div class="noposter">${art(hash(m.id),"",{k:"pm"})}</div>`}
     ${m.kind==="video"?`<span class="vplay"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg></span>
       <span class="vlen">${m.dur?mmss(m.dur):"Video"}</span>`:""}</div>`;
@@ -4972,8 +4978,8 @@ async function openMediaViewer(mediaId,post){
     return;
   }
   stage.innerHTML = (m&&m.kind==="video")
-    ? `<video src="${url}" controls playsinline autoplay style="width:100%;border-radius:14px;display:block"></video>`
-    : `<img src="${url}" alt="" style="width:100%;border-radius:14px;display:block">`;
+    ? `<video src="${esc(url)}" controls playsinline autoplay style="width:100%;border-radius:14px;display:block"></video>`
+    : `<img src="${esc(url)}" alt="" style="width:100%;border-radius:14px;display:block">`;
 }
 
 /* ---------- safety: report and block ---------- */
@@ -6558,7 +6564,7 @@ function renderStep(){
   else if(st.id==="done"){
     body.innerHTML=`<div class="splash">
       <h1 class="lw">Welcome</h1>
-      <p>Your card is live. ${(obDraft.instruments[0]||"Musicians").toString()} players near ${obDraft.city||"you"} can find you now.</p>
+      <p>Your card is live. ${esc(obDraft.instruments[0]||"Musicians")} players near ${esc(obDraft.city||"you")} can find you now.</p>
       <div class="free">Free. No subscription, ever.</div></div>`;
     foot.innerHTML=`<button class="btn" id="ob-next">Start looking</button>
       <p class="fine">Add a track any time from your profile — it goes straight into Jammy Radio's rotation.</p>`;
