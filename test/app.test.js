@@ -1503,10 +1503,22 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     ok(other === "p1", "there is somebody to disconnect from");
 
     w.__peek('openProfile("p1")'); await wait(200);
-    const sheet = w.document.querySelector("#sheetbody").textContent;
-    ok(/Disconnect/i.test(sheet), "their profile offers a way out");
 
-    w.document.querySelector("#pf-disc").click(); await wait(160);
+    /* The relationship is the button. Before this, Disconnect was one of
+       four identical grey buttons at the bottom of the sheet and the
+       first person to use Jammy said it wasn't clear how to remove
+       somebody — nothing on screen said they WERE connected. */
+    const state = w.document.querySelector("#pf-state");
+    ok(!!state, "a connected person's profile says so, as a button");
+    if (!state) throw new Error("no #pf-state — the relationship is not a button");
+    ok(/Connected/i.test(state.textContent), "and the button names the relationship");
+
+    state.click(); await wait(200);
+    const menu = w.document.querySelector("#sheetbody").textContent;
+    ok(/Disconnect/i.test(menu), "tapping it is where disconnecting lives");
+    ok(/Message/i.test(menu), "alongside the things you do with a connection");
+
+    w.document.querySelectorAll("[data-row]")[2].click(); await wait(200);
     const warn = w.document.querySelector("#sheetbody").textContent;
     ok(/Keep the connection/i.test(warn), "and asks before doing it");
     ok(/isn't told/i.test(warn), "saying they are not notified");
@@ -1528,12 +1540,51 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     w.__peek('go("chats")'); await wait(200);
     const other = "p1";
     w.__peek('openProfile("p1")'); await wait(200);
-    w.document.querySelector("#pf-disc").click(); await wait(160);
+    w.document.querySelector("#pf-state").click(); await wait(200);
+    w.document.querySelectorAll("[data-row]")[2].click(); await wait(200);
     w.document.querySelector("#dc-no").click(); await wait(200);
     ok(!api._log.some(l => l.startsWith("disconnect:")),
        "backing out tells the server nothing");
     ok((w.__peek("S.connections") || []).includes(other),
        "and they are still a connection");
+  }
+
+  console.log("\n55a4. BLOCKING, from the same place Facebook keeps it");
+  {
+    const { w, api } = await boot(true, signedIn({ convos: DISC_CONVOS }));
+    await wait(200);
+    w.__peek('go("chats")'); await wait(200);
+    w.__peek('openProfile("p1")'); await wait(200);
+
+    /* Blocking and parting ways are different acts, so they are not
+       side by side looking identical. Blocking is behind the "..."
+       button, the way it is everywhere else. */
+    const more = w.document.querySelector("#pf-more");
+    ok(!!more, "every profile has a more menu");
+    more.click(); await wait(200);
+    const m = w.document.querySelector("#sheetbody").textContent;
+    ok(/Block/i.test(m), "which is where blocking lives");
+    ok(/Report/i.test(m), "and reporting");
+    ok(!/Disconnect/i.test(m), "and not disconnecting, which is a different thing");
+
+    w.document.querySelectorAll("[data-row]")[0].click(); await wait(200);
+    const warn = w.document.querySelector("#sheetbody").textContent;
+    ok(/Block/i.test(warn), "blocking asks first");
+    ok(/aren't told|isn't told/i.test(warn), "and says they are not notified");
+
+    w.document.querySelector("#bl-yes").click(); await wait(400);
+    ok(api._log.some((l) => l.startsWith("block:")), "and then actually blocks them");
+  }
+
+  console.log("\n55a5. CHANGING YOUR MIND about blocking");
+  {
+    const { w, api } = await boot(true, signedIn({ convos: DISC_CONVOS }));
+    await wait(200);
+    w.__peek('openProfile("p1")'); await wait(200);
+    w.document.querySelector("#pf-more").click(); await wait(200);
+    w.document.querySelectorAll("[data-row]")[0].click(); await wait(200);
+    w.document.querySelector("#bl-no").click(); await wait(200);
+    ok(!api._log.some((l) => l.startsWith("block:")), "backing out blocks nobody");
   }
 
   console.log("\n55b. CHANGING YOUR MIND leaves it alone");

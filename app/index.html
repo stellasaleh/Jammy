@@ -152,6 +152,31 @@ nav .nb{position:absolute;top:4px;right:calc(50% - 20px);background:var(--mag);c
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;background:var(--mag);color:#fff;
   font-weight:600;font-size:14.5px;padding:11px 18px;border-radius:14px;box-shadow:none}
 .btn.ghost{background:var(--surface2);color:var(--text);box-shadow:none;border:1px solid var(--line)}
+
+/* The profile's action row. The relationship is a button that names it
+   — "Connected" — because the way to stop being connected has to be the
+   thing that says you are. */
+.pfrow{display:flex;gap:8px;align-items:stretch}
+.pfrow .btn{flex:1;min-width:0;padding-left:12px;padding-right:12px}
+.pfrow .state{gap:6px;font-size:14.5px}
+.pfrow .state svg{width:15px;height:15px;flex:none}
+.pfrow .state .caret{width:13px;height:13px;opacity:.65;margin-left:-2px}
+.pfrow .more{flex:0 0 46px;padding:0}
+.pfrow .more svg{width:19px;height:19px}
+
+/* A row in one of the profile menus */
+.menurow{display:flex;align-items:flex-start;gap:12px;width:100%;text-align:left;
+  padding:13px 14px;margin-bottom:6px;border-radius:13px;cursor:pointer;
+  background:var(--surface2);border:1px solid var(--line);color:var(--text);font:inherit}
+.menurow:active{transform:scale(.99)}
+.menurow:focus-visible{outline:2px solid var(--mag);outline-offset:2px}
+.menurow .mi{flex:none;width:20px;height:20px;margin-top:1px;color:var(--dim)}
+.menurow .mi svg{width:20px;height:20px}
+.menurow .mt{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.menurow .mt b{font-weight:600;font-size:15px}
+.menurow .mt span{font-size:12.5px;color:var(--dim);line-height:1.45}
+.menurow.danger .mt b{color:var(--mag)}
+.menurow.danger .mi{color:var(--mag)}
 .btn.amber{background:var(--amber);color:#1C0A02;box-shadow:none}
 .btn:active{transform:scale(.97)}
 .btn svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
@@ -1963,6 +1988,17 @@ const NOTE={"C":261.63,"C#":277.18,"D":293.66,"D#":311.13,"E":329.63,"F":349.23,
 let actx=null,nowPlaying=null,loopT=null,rafT=null;
 function rootOf(k){const m=String(k).match(/^[A-G][#♭]?/);return NOTE[m?m[0]:"C"]||261.63}
 function scaleOf(k){return /minor|dorian|hijaz/i.test(k)?[0,2,3,5,7,8,10]:[0,2,4,5,7,9,11]}
+/* Icons for the profile's action row and its two menus. Stroked rather
+   than filled, to sit with the rest of the set. */
+const ICON_TICK='<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+const ICON_CARET='<svg aria-hidden="true" class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+const ICON_DOTS='<svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>';
+const ICON_CHAT='<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/></svg>';
+const ICON_MIC='<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3.5"/></svg>';
+const ICON_UNLINK='<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 14.5l-2 2a3.5 3.5 0 0 1-5-5l2-2M14.5 9.5l2-2a3.5 3.5 0 0 1 5 5l-2 2M3 3l18 18"/></svg>';
+const ICON_BLOCK='<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>';
+const ICON_FLAG='<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4M5 4h12l-2.2 4L17 12H5"/></svg>';
+
 const ICON_PLAY='<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg>';
 const ICON_PAUSE='<svg aria-hidden="true" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';
 const ICON_TRASH='<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
@@ -4218,19 +4254,108 @@ function openProfile(id){
       return `<div class="trow"><div class="cov">${art(hash(uid),"",{k:"t"})}</div>
         <div class="t"><b>${esc(t.title)}</b><span>${esc(t.key)} · ${t.bpm} bpm · ${nfmt(t.plays+(S.plays[uid]||0))} plays</span></div>
         <button class="pbtn" data-play="${esc(uid)}" data-ptrack="${p.id}|${i}">${nowPlaying===uid?ICON_PAUSE:ICON_PLAY}</button></div>`}).join("")}</div>
-    <button class="btn" id="pf-conn" style="width:100%">${connected(p.id)?"Open chat":"Connect with "+esc(p.name.split(" ")[0])}</button>
-    ${connected(p.id)?`<button class="btn ghost" id="pf-clip" style="width:100%;margin-top:8px">Send them a jam clip</button>`:""}
-    ${connected(p.id)?`<button class="btn ghost" id="pf-disc" style="width:100%;margin-top:8px">Disconnect</button>`:""}
-    <button class="btn ghost" id="pf-report" style="width:100%;margin-top:8px">Report or block</button>`;
+    ${connected(p.id)
+      ? `<div class="pfrow">
+           <button class="btn ghost state" id="pf-state">${ICON_TICK}Connected${ICON_CARET}</button>
+           <button class="btn" id="pf-conn">Message</button>
+           <button class="btn ghost more" id="pf-more" aria-label="More options about ${esc(p.name)}">${ICON_DOTS}</button>
+         </div>`
+      : `<div class="pfrow">
+           <button class="btn" id="pf-conn" style="flex:1">Connect with ${esc(p.name.split(" ")[0])}</button>
+           <button class="btn ghost more" id="pf-more" aria-label="More options about ${esc(p.name)}">${ICON_DOTS}</button>
+         </div>`}`;
   $("#sheet").classList.add("on");
   b.querySelectorAll("[data-ptrack]").forEach(btn=>btn.onclick=()=>{
     const[aid,ix]=btn.dataset.ptrack.split("|");const who=A(aid);play(who.tracks[+ix],who)});
   $("#pf-conn").onclick=()=>{$("#sheet").classList.remove("on");
     if(connected(p.id)){go("chats");openChat(p.id)}else connect(p.id)};
-  if($("#pf-clip"))$("#pf-clip").onclick=()=>{$("#sheet").classList.remove("on");
-    go("chats");openChat(p.id);setTimeout(startRecording,420)};
-  if($("#pf-disc"))$("#pf-disc").onclick=()=>confirmDisconnect(p);
-  $("#pf-report").onclick=()=>openReport(p.id);
+  if($("#pf-state"))$("#pf-state").onclick=()=>connectionMenu(p);
+  $("#pf-more").onclick=()=>moreMenu(p);
+}
+
+/* ------------------------------------------------------------
+   The two menus behind a profile.
+
+   Disconnect used to be a row of equal-looking grey buttons at the
+   bottom of the sheet, and the first person to use Jammy said it was
+   not clear how to remove somebody. It wasn't: nothing on screen said
+   "you are connected to this person", so there was nothing obvious to
+   press to stop being.
+
+   So the relationship is now the button. It reads "Connected", the way
+   Facebook's reads "Friends", and tapping the thing that describes the
+   relationship is where you end it. Blocking and reporting live behind
+   the separate "..." button, because blocking someone and parting ways
+   with them are different acts and should not sit side by side looking
+   identical.
+   ------------------------------------------------------------ */
+function menuSheet(title, sub, rows){
+  const b=$("#sheetbody");
+  b.innerHTML=`<div class="grabber"></div>
+    <h2 style="font-size:19px;margin:6px 0 ${sub?"4px":"14px"}">${esc(title)}</h2>
+    ${sub?`<p class="dimtext" style="font-size:13.5px;margin:0 0 14px">${esc(sub)}</p>`:""}
+    ${rows.map((r,i)=>`<button class="menurow${r.danger?" danger":""}" data-row="${i}">
+        <span class="mi">${r.icon||""}</span>
+        <span class="mt"><b>${esc(r.label)}</b>${r.note?`<span>${esc(r.note)}</span>`:""}</span>
+      </button>`).join("")}
+    <button class="btn ghost" id="menu-cancel" style="width:100%;margin-top:10px">Cancel</button>`;
+  $("#sheet").classList.add("on");
+  b.querySelectorAll("[data-row]").forEach(el=>el.onclick=()=>rows[+el.dataset.row].go());
+  $("#menu-cancel").onclick=()=>$("#sheet").classList.remove("on");
+}
+
+function connectionMenu(p){
+  const first=p.name.split(" ")[0];
+  menuSheet("You're connected to "+p.name, null, [
+    {label:"Message "+first, icon:ICON_CHAT,
+     go:()=>{$("#sheet").classList.remove("on");go("chats");openChat(p.id)}},
+    {label:"Send a jam clip", icon:ICON_MIC,
+     go:()=>{$("#sheet").classList.remove("on");go("chats");openChat(p.id);setTimeout(startRecording,420)}},
+    {label:"Disconnect", note:"Ends the connection for both of you", icon:ICON_UNLINK,
+     danger:true, go:()=>confirmDisconnect(p)},
+  ]);
+}
+
+function moreMenu(p){
+  const first=p.name.split(" ")[0];
+  menuSheet(p.name, null, [
+    {label:"Block "+first, note:"They can't see you or reach you, and aren't told",
+     icon:ICON_BLOCK, danger:true, go:()=>confirmBlock(p)},
+    {label:"Report "+first, note:"Sent to us and read by a person",
+     icon:ICON_FLAG, danger:true, go:()=>openReport(p.id)},
+  ]);
+}
+
+/* Blocking on its own, without filling in a report first. Someone who
+   wants a person gone should not have to explain themselves to anybody
+   to make that happen. Reporting is still there, separately, for when
+   they want us to know. */
+function confirmBlock(p){
+  const first=p.name.split(" ")[0];
+  const b=$("#sheetbody");
+  b.innerHTML=`<div class="grabber"></div>
+    <h2 style="font-size:20px;margin:6px 0 8px">Block ${esc(p.name)}?</h2>
+    <p class="dimtext" style="font-size:14px;line-height:1.55;margin:0 0 6px">
+      ${esc(first)} won't be able to find you, see anything you post, or message
+      you. You won't see them either. ${esc(first)} isn't told.</p>
+    <p class="dimtext" style="font-size:14px;line-height:1.55;margin:0 0 16px">
+      If you're connected, that ends too. You can undo this in Settings,
+      under Account and safety.</p>
+    <button class="btn" id="bl-no" style="width:100%">Cancel</button>
+    <button class="btn ghost" id="bl-yes" style="width:100%;margin-top:8px">Block ${esc(first)}</button>
+    <button class="btn ghost" id="bl-report" style="width:100%;margin-top:8px">Block and report them</button>`;
+  $("#sheet").classList.add("on");
+  $("#bl-no").onclick=()=>$("#sheet").classList.remove("on");
+  $("#bl-report").onclick=()=>openReport(p.id);
+  $("#bl-yes").onclick=async()=>{
+    const btn=$("#bl-yes");btn.disabled=true;btn.textContent="Blocking…";
+    const ok=await blockUser(p.id,null,"");
+    if(!ok){btn.disabled=false;btn.textContent="Block "+first;return}
+    $("#sheet").classList.remove("on");
+    if(chatId===p.id){chatId=null;$("#chat").classList.remove("on")}
+    refreshDiscover();renderFeed();renderChats();renderYou();updateBadge();
+    toast(first+" blocked");
+  };
 }
 
 /* Leaving a connection.
