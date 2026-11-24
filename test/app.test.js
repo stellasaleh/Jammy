@@ -14,6 +14,7 @@ function makeAPI(opts = {}) {
   const err = (m) => ({ data: null, error: new Error(m) });
   const api = {
     _log: log,
+    _disconnected: new Set(),
     _blocked: new Set(),
     sb: { rpc: async (n, a) => {
             log.push("rpc:" + n);
@@ -59,7 +60,9 @@ function makeAPI(opts = {}) {
          fake one must too, or tests pass against a server that does not exist */
       list: async () => {
         log.push("convoList");
-        const rows = (opts.convos || []).filter((c) => !api._blocked.has(c.other_id));
+        const rows = (opts.convos || [])
+          .filter((c) => !api._blocked.has(c.other_id))
+          .filter((c) => !api._disconnected.has(c.other_id));
         return { data: rows, error: null };
       },
       dmWith: async (u) => { log.push("dmWith:" + u); return { data: "c1", error: null }; },
@@ -120,6 +123,15 @@ function makeAPI(opts = {}) {
         return { data: {}, error: null };
       },
       unblock: async (id) => { log.push("unblock:" + id); api._blocked.delete(id); return { data: {}, error: null }; },
+      disconnect: async (id) => {
+        log.push("disconnect:" + id);
+        if (opts.disconnectFails) return err(opts.disconnectFails);
+        /* the real server drops the DM from both people's lists, so a
+           later convos() must not hand it back — otherwise this fake
+           would report success on something the database does not do */
+        api._disconnected.add(id);
+        return { data: null, error: null };
+      },
       report: async (r) => { log.push("report:" + r.reason); return opts.reportFails ? err(opts.reportFails) : { data: {}, error: null }; },
     },
   };
@@ -825,7 +837,24 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     w.document.querySelector("#m-gigs").click(); await wait(140);
     const txt = w.document.querySelector("#gigs").textContent;
     ok(/No gigs coming up/i.test(txt), "an empty list explains itself");
-    ok(/Look anywhere/i.test(txt), "and offers to widen the search");
+    /* Jammy now searches everywhere by default — a 7-mile default made a
+       new person's app look dead. With nothing to widen, offering to
+       "look anywhere" would be nonsense, so the way forward is Try again. */
+    ok(/anywhere/i.test(txt), "and says it already looked everywhere");
+    ok(/Try again/i.test(txt), "and offers a way forward");
+  }
+
+  /* and when the search IS narrowed, widening is what it offers */
+  {
+    const { w } = await boot(true, signedIn({ gigs: [] }));
+    await wait(120);
+    w.__poke && w.__poke("S.filters.radius", 7);
+    w.__peek('S.filters.radius=7'); await wait(20);
+    w.__peek('go("disc")'); await wait(40);
+    w.document.querySelector("#m-gigs").click(); await wait(140);
+    const txt = w.document.querySelector("#gigs").textContent;
+    ok(/within 7 miles/i.test(txt), "a narrowed search says how narrow");
+    ok(/Look anywhere/i.test(txt), "and offers to widen it");
   }
 
   /* ----------------------------------------------------------
@@ -1445,6 +1474,66 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
     w.document.querySelector("[data-rmtrack-yes]").click(); await wait(260);
     ok(api._log.some((l) => l === "removeTrack:t1"), "confirming removes it for real");
+  }
+
+  /* ------------------------------------------------------------
+     LEAVING A CONNECTION
+
+     The first person to use Jammy found there was no way out of
+     one. Blocking existed, but blocking is for somebody who
+     frightens you; most people who want out played together once
+     and it didn't work. Forcing them to block a person to do that
+     is a bad choice to put in front of anyone.
+     ------------------------------------------------------------ */
+  const DISC_CONVOS = [
+    { conversation_id: "dc1", kind: "dm", band_id: null, other_id: "p1",
+      other_name: "Mina Okafor", other_handle: "minabass", other_city: "Jamaica Plain",
+      other_photo: null, band_name: null, last_body: "bring the trumpet",
+      last_clip_label: null, last_duration_ms: null, last_sender_id: "p1",
+      last_at: "2026-11-18T11:00:00Z", unread: 0 },
+  ];
+
+  console.log("\n55a2. DISCONNECTING, without having to block anybody");
+  {
+    const { w, api } = await boot(true, signedIn({ convos: DISC_CONVOS }));
+    await wait(200);
+    w.__peek('go("chats")'); await wait(200);
+
+    const other = w.__peek("LIVECONVOS[0] && LIVECONVOS[0].other_id");
+    ok(other === "p1", "there is somebody to disconnect from");
+
+    w.__peek('openProfile("p1")'); await wait(200);
+    const sheet = w.document.querySelector("#sheetbody").textContent;
+    ok(/Disconnect/i.test(sheet), "their profile offers a way out");
+
+    w.document.querySelector("#pf-disc").click(); await wait(160);
+    const warn = w.document.querySelector("#sheetbody").textContent;
+    ok(/Keep the connection/i.test(warn), "and asks before doing it");
+    ok(/isn't told/i.test(warn), "saying they are not notified");
+    ok(/disappears for both/i.test(warn),
+       "and is honest that the conversation goes too");
+    ok(/can't be undone/i.test(warn), "and that it cannot be undone");
+
+    w.document.querySelector("#dc-yes").click(); await wait(400);
+    ok(api._log.some(l => l.startsWith("disconnect:")),
+       "confirming actually tells the server");
+    ok(!(w.__peek("S.connections") || []).includes(other),
+       "and they stop being a connection here too");
+  }
+
+  console.log("\n55a3. CHANGING YOUR MIND about disconnecting");
+  {
+    const { w, api } = await boot(true, signedIn({ convos: DISC_CONVOS }));
+    await wait(200);
+    w.__peek('go("chats")'); await wait(200);
+    const other = "p1";
+    w.__peek('openProfile("p1")'); await wait(200);
+    w.document.querySelector("#pf-disc").click(); await wait(160);
+    w.document.querySelector("#dc-no").click(); await wait(200);
+    ok(!api._log.some(l => l.startsWith("disconnect:")),
+       "backing out tells the server nothing");
+    ok((w.__peek("S.connections") || []).includes(other),
+       "and they are still a connection");
   }
 
   console.log("\n55b. CHANGING YOUR MIND leaves it alone");

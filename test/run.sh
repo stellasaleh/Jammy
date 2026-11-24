@@ -26,7 +26,7 @@ AS_USER="PGPASSWORD=app psql -q -h 127.0.0.1 -U app_user -d jammy -v ON_ERROR_ST
 
 MIGRATIONS="01_schema 02_security_and_functions 03_scale 04_likes_comments \
 05_ads 06_lockdown 07_storage 08_chat 09_swipe 10_grants 11_discover_fallback \
-12_matching_fix 13_match_repair 14_blocking_fix 15_requests 16_bands 17_gigs 18_roster 19_feed 20_account 21_chart 22_radio 23_columns 24_uploads"
+12_matching_fix 13_match_repair 14_blocking_fix 15_requests 16_bands 17_gigs 18_roster 19_feed 20_account 21_chart 22_radio 23_columns 24_uploads 25_live_and_leaving"
 
 echo "building the database"
 bash "$HERE/../replica.sh" >/dev/null 2>&1 || /home/claude/replica.sh >/dev/null 2>&1

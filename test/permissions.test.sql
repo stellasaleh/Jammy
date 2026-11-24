@@ -135,3 +135,35 @@ select t('nor lift their own ban',
 select t('and Discover still works, returning miles rather than a point',
          exists (select 1 from discover(500)));
 reset role;
+
+-- ------------------------------------------------------------
+--  REALTIME, and leaving a connection (25_live_and_leaving.sql)
+--
+--  The first person to use Jammy found that messages only showed
+--  up after a reload. The app's subscription was correct and
+--  always had been; Supabase simply never broadcast, because
+--  `messages` was never added to its realtime publication.
+--  post_comments and post_likes were added back in 04 and
+--  messages was missed. Every test passed throughout, because
+--  every test fakes the server, and a fake calling a callback is
+--  no evidence that Postgres would have.
+-- ------------------------------------------------------------
+select t('the server broadcasts new messages',
+         exists (select 1 from pg_publication_tables
+                  where pubname = 'supabase_realtime' and tablename = 'messages'));
+
+select t('and changes to the chat list',
+         exists (select 1 from pg_publication_tables
+                  where pubname = 'supabase_realtime' and tablename = 'conversation_members'));
+
+select t('as it already did for comments and likes',
+         (select count(*) from pg_publication_tables
+           where pubname = 'supabase_realtime'
+             and tablename in ('post_comments','post_likes')) = 2);
+
+select t('there is a way out of a connection that is not a block',
+         exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                  where n.nspname = 'public' and p.proname = 'disconnect_from'));
+
+select t('and an ordinary member is allowed to use it',
+         has_function_privilege('app_user', 'public.disconnect_from(uuid)', 'execute'));

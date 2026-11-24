@@ -96,3 +96,58 @@ select t('somebody outside the conversation sees none of it',
 select t('and has no conversations of their own',
          (select count(*) = 0 from my_conversations()));
 reset role;
+
+-- ------------------------------------------------------------
+--  5. Leaving a connection (25_live_and_leaving.sql)
+--
+--  The first person to use Jammy had no way out of a connection
+--  short of blocking somebody, which is a bad choice to force on
+--  anyone who simply played once and did not click.
+--
+--  The first version of disconnect_from removed the connection
+--  and the swipes and left conversation_members alone — so the
+--  chat would still have been sitting in both people's lists
+--  while the connection was gone, which is exactly what the
+--  confirmation screen promises will not happen. These tests are
+--  what caught that.
+-- ------------------------------------------------------------
+set role app_user;
+set request.jwt.claim.sub = 'cccc0000-0000-0000-0000-00000000000a';
+
+select t('before disconnecting, they are connected',
+         (select count(*) = 1 from connections
+           where a_id = least('cccc0000-0000-0000-0000-00000000000a'::uuid,
+                              'cccc0000-0000-0000-0000-00000000000b'::uuid)
+             and b_id = greatest('cccc0000-0000-0000-0000-00000000000a'::uuid,
+                                 'cccc0000-0000-0000-0000-00000000000b'::uuid)));
+
+select t('and each can see the conversation',
+         (select count(*) = 1 from my_conversations()));
+
+select disconnect_from('cccc0000-0000-0000-0000-00000000000b');
+
+select t('disconnecting ends the connection',
+         (select count(*) = 0 from connections
+           where a_id = least('cccc0000-0000-0000-0000-00000000000a'::uuid,
+                              'cccc0000-0000-0000-0000-00000000000b'::uuid)
+             and b_id = greatest('cccc0000-0000-0000-0000-00000000000a'::uuid,
+                                 'cccc0000-0000-0000-0000-00000000000b'::uuid)));
+
+select t('and takes the conversation off my list',
+         (select count(*) = 0 from my_conversations()));
+
+select t('and clears the swipes, so we can find each other again',
+         (select count(*) = 0 from swipes
+           where (from_id = 'cccc0000-0000-0000-0000-00000000000a'
+                  and to_id = 'cccc0000-0000-0000-0000-00000000000b')
+              or (from_id = 'cccc0000-0000-0000-0000-00000000000b'
+                  and to_id = 'cccc0000-0000-0000-0000-00000000000a')));
+reset role;
+
+--  and it is mutual: the other person loses it too, rather than
+--  being left typing into a thread nobody is reading
+set role app_user;
+set request.jwt.claim.sub = 'cccc0000-0000-0000-0000-00000000000b';
+select t('the other person loses the conversation as well',
+         (select count(*) = 0 from my_conversations()));
+reset role;

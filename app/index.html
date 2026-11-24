@@ -1281,14 +1281,23 @@ function bearing(a,b){
   const x=Math.cos(toRad(a.lat))*Math.sin(toRad(b.lat))-Math.sin(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.cos(toRad(b.lng-a.lng));
   return (Math.atan2(y,x)*180/Math.PI+360)%360;
 }
-function myLoc(){return (S.me&&S.me.loc)||HOME}
+/* HOME is Boston, where the signed-out demo lives. A real account that
+   has no location must not be handed one: a person in Seattle was being
+   told "Based in Boston" and measured from there. When we don't know,
+   the label says we don't know, and nothing is measured from it. */
+const NO_LOC={lat:null,lng:null,label:"not set yet"};
+function myLoc(){return (S.me&&S.me.loc)||(LIVE?NO_LOC:HOME)}
 /* Live rows arrive with the distance already worked out by the database,
    which is the only version worth trusting: the server never sends another
    person's coordinates, so there is nothing here to measure from. */
 function distTo(a){
   if(a&&typeof a._miles==="number")return a._miles;
   if(a&&a._miles===null)return null;          /* matched on city, not measured */
-  return distMiles(myLoc(),{lat:a.lat,lng:a.lng});
+  const me=myLoc();
+  /* no location of our own means no distance — not a distance of zero,
+     and not a number measured from a city we invented */
+  if(!me||typeof me.lat!=="number"||!a||typeof a.lat!=="number")return null;
+  return distMiles(me,{lat:a.lat,lng:a.lng});
 }
 /* A distance we don't have is not zero miles. Someone who declined the
    location prompt is matched on city instead, and the card should say so
@@ -1425,7 +1434,14 @@ async function locateOnLaunch(opts){
     const typed=cityFromName(S.me.city);
     if(typed){setLoc(typed.lat,typed.lng,typed.label,"city");return S.me.loc}
 
-    if(!S.me.loc||!S.me.loc.lat)setLoc(HOME.lat,HOME.lng,HOME.label,"fallback");
+    /* Last resort. GPS said no, the IP lookup gave nothing, and no city
+       has been typed. The demo can sit in Boston, because the invented
+       musicians it shows are all there. A real account cannot: putting
+       somebody at Boston's coordinates and then saving that to the
+       server tells them, and everyone near Boston, something nobody
+       ever said. Leave it unset, and Discover shows the screen that
+       asks where they are. */
+    if(!LIVE&&(!S.me.loc||!S.me.loc.lat))setLoc(HOME.lat,HOME.lng,HOME.label,"fallback");
     return S.me.loc;
   }finally{
     locating=false;
@@ -1913,13 +1929,18 @@ function freshState(){
     joined:["b1","b2","b3","b4"],
     firstRun:true,onboarded:false,account:null,myBands:[],bandEvents:{},readAlerts:[],eventVis:{},
     bandMedia:{},blocks:[],reports:[],comments:{},saved:{},bandPhotos:{},adRequests:[],adStats:{},
-    filters:{radius:7,needs:[],genreMode:"any",minGenres:0,excludeSame:true,remoteOk:false,view:"deck"}};
+    filters:{radius:0,needs:[],genreMode:"any",minGenres:0,excludeSame:true,remoteOk:false,view:"deck"}};
 }
 let S=freshState();
 try{const raw=localStorage.getItem(KEY);if(raw)S=Object.assign(S,JSON.parse(raw))}catch(e){}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
-S.filters=Object.assign({radius:7,needs:[],genreMode:"any",minGenres:0,excludeSame:true,remoteOk:false,view:"deck"},S.filters||{});
-if(!S.me.loc)S.me.loc={lat:42.3601,lng:-71.0589,label:S.me.city||"Boston"};
+S.filters=Object.assign({radius:0,needs:[],genreMode:"any",minGenres:0,excludeSame:true,remoteOk:false,view:"deck"},S.filters||{});
+/* The signed-out demo is set in Boston, so its invented musicians need a
+   Boston to stand in. A real account must never be given a location it
+   did not provide: somebody in Seattle was being quietly placed at
+   Boston's coordinates and shown who was near there. If we don't know
+   where a real person is, we don't know, and the app says so. */
+if(!LIVE&&!S.me.loc)S.me.loc={lat:42.3601,lng:-71.0589,label:S.me.city||"Boston"};
 if(!S.me.instruments)S.me.instruments=String(S.me.role||"").split(/\s*·\s*/).filter(Boolean);
 if(!S.me.days)S.me.days=["Wed","Thu"];
 if(!S.myBands)S.myBands=[];
@@ -2036,6 +2057,17 @@ function play(track,artist){
 
   /* a real file beats a synthesised stand-in, always */
   if(track&&track.path){playReal(track,artist,uid);return}
+
+  /* No file. The synthesiser below invents a melody from the key and
+     tempo, which was fine when every track on Jammy was invented too.
+     Against a real account it is not: it plays computer-generated music
+     under a real musician's name, on their profile, as though they
+     recorded it. The first person to use Jammy heard exactly that and
+     said so. If there is no recording, say there is no recording. */
+  if(LIVE){
+    toast("That track has no audio file — nothing was uploaded for it");
+    return;
+  }
 
   stopAudio();
   try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();if(actx.state==="suspended")actx.resume()}
@@ -3417,7 +3449,7 @@ function openFilters(){
     save();$("#sheet").classList.remove("on");refreshDiscover();loadDeckSoon();
   };
   $("#f-clear").onclick=()=>{
-    S.filters=Object.assign(S.filters,{radius:7,needs:[],genreMode:"any",minGenres:0,excludeSame:true,remoteOk:true});
+    S.filters=Object.assign(S.filters,{radius:0,needs:[],genreMode:"any",minGenres:0,excludeSame:true,remoteOk:true});
     save();$("#sheet").classList.remove("on");refreshDiscover();loadDeckSoon();toast("Filters reset");
   };
   paintRad();
@@ -4188,6 +4220,7 @@ function openProfile(id){
         <button class="pbtn" data-play="${esc(uid)}" data-ptrack="${p.id}|${i}">${nowPlaying===uid?ICON_PAUSE:ICON_PLAY}</button></div>`}).join("")}</div>
     <button class="btn" id="pf-conn" style="width:100%">${connected(p.id)?"Open chat":"Connect with "+esc(p.name.split(" ")[0])}</button>
     ${connected(p.id)?`<button class="btn ghost" id="pf-clip" style="width:100%;margin-top:8px">Send them a jam clip</button>`:""}
+    ${connected(p.id)?`<button class="btn ghost" id="pf-disc" style="width:100%;margin-top:8px">Disconnect</button>`:""}
     <button class="btn ghost" id="pf-report" style="width:100%;margin-top:8px">Report or block</button>`;
   $("#sheet").classList.add("on");
   b.querySelectorAll("[data-ptrack]").forEach(btn=>btn.onclick=()=>{
@@ -4196,7 +4229,55 @@ function openProfile(id){
     if(connected(p.id)){go("chats");openChat(p.id)}else connect(p.id)};
   if($("#pf-clip"))$("#pf-clip").onclick=()=>{$("#sheet").classList.remove("on");
     go("chats");openChat(p.id);setTimeout(startRecording,420)};
+  if($("#pf-disc"))$("#pf-disc").onclick=()=>confirmDisconnect(p);
   $("#pf-report").onclick=()=>openReport(p.id);
+}
+
+/* Leaving a connection.
+
+   Until the first person used Jammy there was no way out of one. Blocking
+   existed, but blocking is for somebody who frightens you, and most people
+   who want out just played together once and it did not work. Making them
+   block a person to do that is a bad choice to force on anyone.
+
+   The confirmation is in the page rather than a confirm() dialog, which
+   never appears in some phone browsers and would make the button look
+   broken. */
+function confirmDisconnect(p){
+  const b=$("#sheetbody");
+  b.innerHTML=`<div class="grabber"></div>
+    <h2 style="font-size:20px;margin:6px 0 8px">Disconnect from ${esc(p.name.split(" ")[0])}?</h2>
+    <p class="dimtext" style="font-size:14px;line-height:1.55;margin:0 0 6px">
+      You'll both drop out of each other's connections, and your conversation
+      disappears for both of you. That part can't be undone.</p>
+    <p class="dimtext" style="font-size:14px;line-height:1.55;margin:0 0 16px">
+      ${esc(p.name.split(" ")[0])} isn't told. You'll each show up in the
+      other's Discover again, so you can connect later if you both want to —
+      but you'd be starting the conversation over.</p>
+    <button class="btn" id="dc-no" style="width:100%">Keep the connection</button>
+    <button class="btn ghost" id="dc-yes" style="width:100%;margin-top:8px">Disconnect</button>`;
+  $("#sheet").classList.add("on");
+  $("#dc-no").onclick=()=>$("#sheet").classList.remove("on");
+  $("#dc-yes").onclick=async()=>{
+    const btn=$("#dc-yes");btn.disabled=true;btn.textContent="Disconnecting…";
+    if(LIVE){
+      const r=await DB.disconnect(p.id);
+      if(r&&r.error){
+        btn.disabled=false;btn.textContent="Disconnect";
+        toast(authMessage(r.error));return;
+      }
+    }
+    /* drop it locally too, so the screen is right before any reload */
+    S.connections=(S.connections||[]).filter(id=>id!==p.id);
+    delete S.threads[p.id];delete S.unread[p.id];
+    if(LIVE){LIVECONVOS=(LIVECONVOS||[]).filter(c=>c.other_id!==p.id)}
+    save();
+    $("#sheet").classList.remove("on");
+    if(chatId===p.id){chatId=null;$("#chat").classList.remove("on")}
+    renderChats();updateBadge();refreshDiscover();
+    toast("Disconnected");
+    if(LIVE){loadConvos();loadDeckSoon()}
+  };
 }
 
 /* ============ you ============ */
@@ -5538,7 +5619,7 @@ function openAddBand(){
     <p class="dimtext" style="font-size:13.5px;margin:0 0 14px">For a band that isn't on Jammy. It'll show in your profile and you can keep its schedule here.</p>
     <div class="field"><label>Band name</label><input id="nb-name" placeholder="The Flaming Weirdos"></div>
     <div class="field"><label>What you play in it</label><input id="nb-role" placeholder="Trumpet"></div>
-    <div class="field"><label>City</label><input id="nb-city" value="${esc(S.me.city||"Boston")}"></div>
+    <div class="field"><label>City</label><input id="nb-city" value="${esc(S.me.city||"")}" autocomplete="address-level2"></div>
     <div class="field"><label>Genres, comma separated</label><input id="nb-gen" placeholder="Funk, Soul"></div>
     <div class="field"><label>Other members — one per line, name then what they play</label>
       <textarea id="nb-mem" placeholder="Dana Whitfield, trumpet 2&#10;Luis Ferrer, horn"></textarea></div>
@@ -6204,6 +6285,7 @@ const DB = {
   answerBandRequest(req,yes){ return JammyAPI.bands.answerRequest(req,yes); },
 
   /* ---- safety ---- */
+  disconnect(id){ return JammyAPI.safety.disconnect(id); },
   block(id){ return JammyAPI.safety.block(id); },
   unblock(id){ return JammyAPI.safety.unblock(id); },
   blockedList(){ return JammyAPI.safety.blocked(); },
@@ -6462,7 +6544,7 @@ function renderStep(){
       <p class="sub">Use the name you'd give at a gig. You can change it later.</p>
       <div class="field"><label>Name</label><input id="ob-name" placeholder="Alex Moreno" autocomplete="name"></div>
       <div class="field"><label>Handle</label><input id="ob-handle" placeholder="@alexmoreno"></div>
-      <div class="field"><label>City</label><input id="ob-city" placeholder="Boston"></div>`;
+      <div class="field"><label>City</label><input id="ob-city" autocomplete="address-level2"></div>`;
     foot.innerHTML=`<button class="btn" id="ob-next" disabled>Continue</button>`;
     const n=$("#ob-name"),h=$("#ob-handle"),c=$("#ob-city"),next=$("#ob-next");
     const check=()=>{next.disabled=!(n.value.trim()&&c.value.trim())};

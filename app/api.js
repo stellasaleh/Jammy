@@ -130,6 +130,16 @@
      date of birth comes back through export_my_data(), and has_location
      answers the only question the app ever asks about the coordinate:
      does the server have one yet. */
+  /* A media type with its parameters stripped off.
+
+     MediaRecorder hands back a blob whose type is "audio/webm;codecs=opus",
+     and Supabase matches a bucket's allowed types as exact strings, so that
+     does not match "audio/webm" and the upload is refused. Every recorded
+     message failed this way, silently, and the first person to try to send
+     one found it. A file picked from the phone usually has a clean type,
+     which is why the file-upload paths appeared to work. */
+  const baseType = (t) => String(t || "").split(";")[0].trim().toLowerCase();
+
   const PROFILE_COLUMNS = [
     "id", "handle", "display_name", "bio", "city", "photo_path",
     "instruments", "instrument_keys", "genres",
@@ -310,13 +320,13 @@
     async send(conversationId, blob, { durationMs, peaks, label }) {
       const me = await uid();
       if (!me) return fail(new Error("not signed in"));
-      const ext = (blob.type || "").includes("mp4") ? "m4a" : "webm";
+      const ext = baseType(blob.type).includes("mp4") ? "m4a" : "webm";
       const id = crypto.randomUUID();
       const path = `clips/${conversationId}/${id}.${ext}`;
 
       const up = await call(() =>
         sb.storage.from("jam-clips").upload(path, blob, {
-          contentType: blob.type || "audio/webm",
+          contentType: baseType(blob.type) || "audio/webm",
           cacheControl: "3600",
         })
       );
@@ -327,7 +337,7 @@
           conversation_id: conversationId,
           sender_id: me,
           clip_path: path,
-          clip_mime: blob.type || "audio/webm",
+          clip_mime: baseType(blob.type) || "audio/webm",
           clip_duration_ms: Math.round(durationMs || 0),
           clip_peaks: peaks || [],
           clip_label: label || "Jam clip",
@@ -458,7 +468,7 @@
     async upload(blob, kind) {
       const me = await uid();
       if (!me) return fail(new Error("not signed in"));
-      const type = blob.type || (kind === "video" ? "video/mp4" : "image/jpeg");
+      const type = baseType(blob.type) || (kind === "video" ? "video/mp4" : "image/jpeg");
       const ext = ({
         "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp",
         "image/gif": "gif", "video/mp4": "mp4", "video/webm": "webm",
@@ -562,7 +572,7 @@
       if (blob.size > 40 * 1024 * 1024)
         return fail(new Error("That file is bigger than 40MB. Try a shorter clip or a smaller export."));
 
-      const type = blob.type || "audio/mpeg";
+      const type = baseType(blob.type) || "audio/mpeg";
       const ext = ({ "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/x-m4a": "m4a",
                      "audio/wav": "wav", "audio/x-wav": "wav", "audio/ogg": "ogg",
                      "audio/webm": "webm", "audio/flac": "flac" })[type]
@@ -648,6 +658,12 @@
 
   /* ---------------- SAFETY ---------------- */
   const safety = {
+    /* Ending a connection without blocking anybody. Blocking is for
+       someone who frightens you; this is for someone you played with
+       once and it didn't work. The server clears the connection and
+       both swipes, so each goes back into the other's Discover. */
+    disconnect: (id) => call(() => sb.rpc("disconnect_from", { who: id })),
+
     block: (id) =>
       call(async () => {
         const me = await uid();

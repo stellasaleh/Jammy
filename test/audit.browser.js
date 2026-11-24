@@ -139,7 +139,7 @@ window.__api = {
            removeTrack: () => ok(true) },
   account: { export: () => ok({ profile: me, posts: [] }),
              remove: () => { log("deleteAccount"); return ok({ deleted:true }); } },
-  safety: { block: () => ok({}), unblock: () => ok({}), report: () => ok({}),
+  safety: { block: () => ok({}), unblock: () => ok({}), report: () => ok({}), disconnect: () => ok({}),
             blocked: () => ok([]) },
 };
 
