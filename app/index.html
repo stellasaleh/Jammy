@@ -177,6 +177,18 @@ nav .nb{position:absolute;top:4px;right:calc(50% - 20px);background:var(--mag);c
 .menurow .mt span{font-size:12.5px;color:var(--dim);line-height:1.45}
 .menurow.danger .mt b{color:var(--mag)}
 .menurow.danger .mi{color:var(--mag)}
+
+/* A row in Your connections */
+.cxrow{display:flex;gap:12px;align-items:center;padding:10px 2px;cursor:pointer;
+  border-bottom:1px solid var(--line)}
+.cxrow:last-of-type{border-bottom:none}
+.cxrow:active{background:var(--surface2)}
+.cxrow .t{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.cxrow .t b{font-size:15.5px;font-weight:600}
+.cxrow .t span{font-size:12.5px;color:var(--dim);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.cxmore,.crmore{flex:none;width:34px;height:34px}
+.cxmore svg,.crmore svg{width:17px;height:17px}
 .btn.amber{background:var(--amber);color:#1C0A02;box-shadow:none}
 .btn:active{transform:scale(.97)}
 .btn svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
@@ -1998,6 +2010,7 @@ const ICON_MIC='<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="
 const ICON_UNLINK='<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 14.5l-2 2a3.5 3.5 0 0 1-5-5l2-2M14.5 9.5l2-2a3.5 3.5 0 0 1 5 5l-2 2M3 3l18 18"/></svg>';
 const ICON_BLOCK='<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>';
 const ICON_FLAG='<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4M5 4h12l-2.2 4L17 12H5"/></svg>';
+const ICON_PERSON='<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20c1.2-4 4-6 7.5-6s6.3 2 7.5 6"/></svg>';
 
 const ICON_PLAY='<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg>';
 const ICON_PAUSE='<svg aria-hidden="true" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';
@@ -4020,6 +4033,15 @@ function renderChats(){
       <div class="t"><b>${esc(p.name)}</b><span>${esc(preview)}</span></div>
       <div class="r"><i>${esc(p.city)}</i>${n?'<span class="u">'+(n>9?"9+":n)+'</span>':""}</div>`;
     row.onclick=()=>openChat(id);
+    /* The same options as everywhere else, on the row itself. Somebody
+       who wants rid of a person looks where that person is, and in
+       Messages that is this row — not a profile they have to go and
+       find first. */
+    const more=el("button","iconbtn crmore");
+    more.setAttribute("aria-label","Options for "+p.name);
+    more.innerHTML=ICON_DOTS;
+    more.onclick=ev=>{ev.preventDefault();ev.stopPropagation();personMenu(p)};
+    row.appendChild(more);
     c.appendChild(row);
   });
   if(!LIVE)c.appendChild(el("div","empty",`<p style="font-size:13px">Group chats are how bands run. Start one from any conversation in the full build.</p>`));
@@ -4269,8 +4291,11 @@ function openProfile(id){
     const[aid,ix]=btn.dataset.ptrack.split("|");const who=A(aid);play(who.tracks[+ix],who)});
   $("#pf-conn").onclick=()=>{$("#sheet").classList.remove("on");
     if(connected(p.id)){go("chats");openChat(p.id)}else connect(p.id)};
-  if($("#pf-state"))$("#pf-state").onclick=()=>connectionMenu(p);
-  $("#pf-more").onclick=()=>moreMenu(p);
+  /* Both openings lead to the same menu — the one you get from the
+     connections list and from a row in Messages too. One menu, the same
+     everywhere, beats a tidier split you have to learn. */
+  if($("#pf-state"))$("#pf-state").onclick=()=>personMenu(p,{fromProfile:true});
+  $("#pf-more").onclick=()=>personMenu(p,{fromProfile:true});
 }
 
 /* ------------------------------------------------------------
@@ -4304,26 +4329,81 @@ function menuSheet(title, sub, rows){
   $("#menu-cancel").onclick=()=>$("#sheet").classList.remove("on");
 }
 
-function connectionMenu(p){
+/* ONE menu for a person, reachable from everywhere they appear: their
+   profile, the connections list, and their row in Messages.
+
+   The first version split this in two — relationship actions behind the
+   "Connected" button, blocking behind "...". That was Facebook's shape,
+   but it meant you had to already know which of the two held the thing
+   you wanted. Same menu everywhere, holding everything, is clearer than
+   a tidier arrangement you have to learn. */
+function personMenu(p, opts){
+  opts=opts||{};
   const first=p.name.split(" ")[0];
-  menuSheet("You're connected to "+p.name, null, [
-    {label:"Message "+first, icon:ICON_CHAT,
-     go:()=>{$("#sheet").classList.remove("on");go("chats");openChat(p.id)}},
-    {label:"Send a jam clip", icon:ICON_MIC,
-     go:()=>{$("#sheet").classList.remove("on");go("chats");openChat(p.id);setTimeout(startRecording,420)}},
-    {label:"Disconnect", note:"Ends the connection for both of you", icon:ICON_UNLINK,
-     danger:true, go:()=>confirmDisconnect(p)},
-  ]);
+  const rows=[];
+  const close=()=>$("#sheet").classList.remove("on");
+
+  if(connected(p.id)){
+    rows.push({label:"Message "+first, icon:ICON_CHAT,
+      go:()=>{close();go("chats");openChat(p.id)}});
+    rows.push({label:"Send a jam clip", icon:ICON_MIC,
+      go:()=>{close();go("chats");openChat(p.id);setTimeout(startRecording,420)}});
+  }
+  if(!opts.fromProfile){
+    rows.push({label:"View profile", icon:ICON_PERSON,
+      go:()=>{close();setTimeout(()=>openProfile(p.id),120)}});
+  }
+  if(connected(p.id)){
+    rows.push({label:"Remove connection",
+      note:"Ends it for both of you. They aren't told.",
+      icon:ICON_UNLINK, danger:true, go:()=>confirmDisconnect(p)});
+  }
+  rows.push({label:"Block "+first,
+    note:"They can't see you or reach you, and aren't told",
+    icon:ICON_BLOCK, danger:true, go:()=>confirmBlock(p)});
+  rows.push({label:"Report "+first, note:"Sent to us and read by a person",
+    icon:ICON_FLAG, danger:true, go:()=>openReport(p.id)});
+
+  menuSheet(p.name, connected(p.id)?"You're connected":null, rows);
 }
 
-function moreMenu(p){
-  const first=p.name.split(" ")[0];
-  menuSheet(p.name, null, [
-    {label:"Block "+first, note:"They can't see you or reach you, and aren't told",
-     icon:ICON_BLOCK, danger:true, go:()=>confirmBlock(p)},
-    {label:"Report "+first, note:"Sent to us and read by a person",
-     icon:ICON_FLAG, danger:true, go:()=>openReport(p.id)},
-  ]);
+/* ------------------------------------------------------------
+   YOUR CONNECTIONS — the list that was missing entirely.
+
+   Tapping "Connections" on your profile used to drop you on the
+   Messages tab, which is not a list of who you are connected to: it is
+   a list of conversations. Somebody you connected with and never messaged
+   did not appear anywhere at all, so there was no way to remove them
+   short of finding them again in Discover.
+   ------------------------------------------------------------ */
+function openConnections(){
+  const ids=(S.connections||[]).filter(id=>!isBlocked(id));
+  const b=$("#sheetbody");
+  b.innerHTML=`<div class="grabber"></div>
+    <h2 style="font-size:20px;margin:6px 0 4px">Your connections</h2>
+    <p class="dimtext" style="font-size:13.5px;margin:0 0 14px">${
+      ids.length?ids.length+(ids.length===1?" person":" people")+". Tap anyone to see what you can do."
+                :"Nobody yet."}</p>
+    <div id="cx-list"></div>
+    ${ids.length?"":`<div class="empty"><h3>No connections yet</h3>
+       <p>When you and somebody both say yes in Discover, they'll be listed here.</p></div>`}
+    <button class="btn ghost" id="cx-close" style="width:100%;margin-top:10px">Done</button>`;
+  const host=$("#cx-list");
+  ids.forEach(id=>{
+    const p=A(id);if(!p)return;
+    const row=el("div","cxrow");
+    row.innerHTML=`<div class="av" style="width:46px;height:46px">${avatarOf(p)}</div>
+      <div class="t"><b>${esc(p.name)}</b><span>${esc([p.role,p.city].filter(Boolean).join(" · "))}</span></div>`;
+    const more=el("button","iconbtn cxmore");
+    more.setAttribute("aria-label","Options for "+p.name);
+    more.innerHTML=ICON_DOTS;
+    more.onclick=ev=>{ev.stopPropagation();personMenu(p)};
+    row.appendChild(more);
+    row.onclick=()=>personMenu(p);
+    host.appendChild(row);
+  });
+  $("#sheet").classList.add("on");
+  $("#cx-close").onclick=()=>$("#sheet").classList.remove("on");
 }
 
 /* Blocking on its own, without filling in a report first. Someone who
@@ -4435,7 +4515,7 @@ function renderYou(){
     const d=e.target.closest("[data-s]");if(!d)return;
     const k=d.dataset.s;
     if(k==="bands")openBandList();
-    else if(k==="conn"){go("chats")}
+    else if(k==="conn"){openConnections()}
     else if(k==="plays"){go("radio")}
     else{if(!myPosts)return toast("You haven't posted yet");go("feed")}
   });

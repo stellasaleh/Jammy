@@ -1485,6 +1485,16 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
      and it didn't work. Forcing them to block a person to do that
      is a bad choice to put in front of anyone.
      ------------------------------------------------------------ */
+  /* click a menu row by what it says, not where it sits — the order
+     changes as the menu grows and an index silently points elsewhere */
+  const menuRow = (w, re) => {
+    const rows = [...w.document.querySelectorAll("[data-row]")];
+    const hit = rows.find((r) => re.test(r.textContent));
+    if (!hit) throw new Error("no menu row matching " + re + " — menu says: " +
+      rows.map((r) => r.textContent.trim().split("\n")[0]).join(" | "));
+    hit.click();
+  };
+
   const DISC_CONVOS = [
     { conversation_id: "dc1", kind: "dm", band_id: null, other_id: "p1",
       other_name: "Mina Okafor", other_handle: "minabass", other_city: "Jamaica Plain",
@@ -1515,10 +1525,11 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
     state.click(); await wait(200);
     const menu = w.document.querySelector("#sheetbody").textContent;
-    ok(/Disconnect/i.test(menu), "tapping it is where disconnecting lives");
+    ok(/Remove connection/i.test(menu), "tapping it is where removing them lives");
     ok(/Message/i.test(menu), "alongside the things you do with a connection");
+    ok(/Block/i.test(menu), "and blocking, in the same menu rather than another one");
 
-    w.document.querySelectorAll("[data-row]")[2].click(); await wait(200);
+    menuRow(w, /Remove connection/i); await wait(200);
     const warn = w.document.querySelector("#sheetbody").textContent;
     ok(/Keep the connection/i.test(warn), "and asks before doing it");
     ok(/isn't told/i.test(warn), "saying they are not notified");
@@ -1541,7 +1552,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const other = "p1";
     w.__peek('openProfile("p1")'); await wait(200);
     w.document.querySelector("#pf-state").click(); await wait(200);
-    w.document.querySelectorAll("[data-row]")[2].click(); await wait(200);
+    menuRow(w, /Remove connection/i); await wait(200);
     w.document.querySelector("#dc-no").click(); await wait(200);
     ok(!api._log.some(l => l.startsWith("disconnect:")),
        "backing out tells the server nothing");
@@ -1565,9 +1576,9 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const m = w.document.querySelector("#sheetbody").textContent;
     ok(/Block/i.test(m), "which is where blocking lives");
     ok(/Report/i.test(m), "and reporting");
-    ok(!/Disconnect/i.test(m), "and not disconnecting, which is a different thing");
+    ok(/Remove connection/i.test(m), "and removing them, in the same place");
 
-    w.document.querySelectorAll("[data-row]")[0].click(); await wait(200);
+    menuRow(w, /^\s*Block/i); await wait(200);
     const warn = w.document.querySelector("#sheetbody").textContent;
     ok(/Block/i.test(warn), "blocking asks first");
     ok(/aren't told|isn't told/i.test(warn), "and says they are not notified");
@@ -1582,9 +1593,64 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     await wait(200);
     w.__peek('openProfile("p1")'); await wait(200);
     w.document.querySelector("#pf-more").click(); await wait(200);
-    w.document.querySelectorAll("[data-row]")[0].click(); await wait(200);
+    menuRow(w, /^\s*Block/i); await wait(200);
     w.document.querySelector("#bl-no").click(); await wait(200);
     ok(!api._log.some((l) => l.startsWith("block:")), "backing out blocks nobody");
+  }
+
+  /* ------------------------------------------------------------
+     THE LIST OF WHO YOU ARE CONNECTED TO
+
+     There wasn't one. Tapping "Connections" on your own profile
+     dropped you on Messages — which is a list of CONVERSATIONS,
+     not of people. Somebody you connected with and never messaged
+     appeared nowhere at all, so there was no way to remove them
+     short of finding them again in Discover.
+     ------------------------------------------------------------ */
+  console.log("\n55a6. YOUR CONNECTIONS, as an actual list");
+  {
+    const { w, api } = await boot(true, signedIn({ convos: DISC_CONVOS }));
+    await wait(200);
+    w.__peek('go("chats")'); await wait(200);   /* loads connections */
+    w.__peek('go("you")'); await wait(300);
+
+    w.document.querySelector('[data-s="conn"]').click(); await wait(300);
+    const list = w.document.querySelector("#sheetbody").textContent;
+    ok(/Your connections/i.test(list), "the Connections stat opens a list of people");
+    ok(/Mina Okafor/.test(list), "with the people you're connected to on it");
+
+    const rows = w.document.querySelectorAll(".cxrow");
+    ok(rows.length === 1, "one row per person", "rows: " + rows.length);
+
+    w.document.querySelector(".cxmore").click(); await wait(250);
+    const menu = w.document.querySelector("#sheetbody").textContent;
+    ok(/Remove connection/i.test(menu), "and each one can be removed from there");
+    ok(/Block/i.test(menu), "or blocked");
+
+    menuRow(w, /Remove connection/i); await wait(200);
+    w.document.querySelector("#dc-yes").click(); await wait(400);
+    ok(api._log.some((l) => l.startsWith("disconnect:")),
+       "and removing them from the list really removes them");
+  }
+
+  console.log("\n55a7. AND THE SAME OPTIONS ON A MESSAGE ROW");
+  {
+    const { w, api } = await boot(true, signedIn({ convos: DISC_CONVOS }));
+    await wait(200);
+    w.__peek('go("chats")'); await wait(300);
+
+    const more = w.document.querySelector(".crmore");
+    ok(!!more, "every conversation row has a more button");
+    more.click(); await wait(250);
+    const menu = w.document.querySelector("#sheetbody").textContent;
+    ok(/Remove connection/i.test(menu), "holding the same Remove connection");
+    ok(/Block/i.test(menu), "and the same Block");
+    ok(/View profile/i.test(menu), "and a way through to their profile");
+
+    menuRow(w, /^\s*Block/i); await wait(250);
+    w.document.querySelector("#bl-yes").click(); await wait(400);
+    ok(api._log.some((l) => l.startsWith("block:")),
+       "and blocking from Messages really blocks");
   }
 
   console.log("\n55b. CHANGING YOUR MIND leaves it alone");
