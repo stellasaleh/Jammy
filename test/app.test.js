@@ -1532,7 +1532,11 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     menuRow(w, /Remove connection/i); await wait(200);
     const warn = w.document.querySelector("#sheetbody").textContent;
     ok(/Keep the connection/i.test(warn), "and asks before doing it");
-    ok(/isn't told/i.test(warn), "saying they are not notified");
+    /* "aren't told" could be read as "they will never know", which is
+       not true — the connection visibly disappears. The copy says we
+       don't notify them, and is clear they may notice. */
+    ok(/don't notify/i.test(warn), "saying we don't notify them");
+    ok(/notice/i.test(warn), "while being straight that they may notice anyway");
     ok(/disappears for both/i.test(warn),
        "and is honest that the conversation goes too");
     ok(/can't be undone/i.test(warn), "and that it cannot be undone");
@@ -1581,7 +1585,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     menuRow(w, /^\s*Block/i); await wait(200);
     const warn = w.document.querySelector("#sheetbody").textContent;
     ok(/Block/i.test(warn), "blocking asks first");
-    ok(/aren't told|isn't told/i.test(warn), "and says they are not notified");
+    ok(/don't notify/i.test(warn), "and says we don't notify them");
 
     w.document.querySelector("#bl-yes").click(); await wait(400);
     ok(api._log.some((l) => l.startsWith("block:")), "and then actually blocks them");
@@ -1651,6 +1655,59 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     w.document.querySelector("#bl-yes").click(); await wait(400);
     ok(api._log.some((l) => l.startsWith("block:")),
        "and blocking from Messages really blocks");
+  }
+
+  /* ------------------------------------------------------------
+     THE OTHER END OF A REMOVAL
+
+     She removed a connection and the other person still saw it,
+     still had the messages. The server was right — it drops the
+     conversation for both — but this app kept its own copy in
+     S.threads and went on showing it. Nothing here ever threw
+     anything away, and nothing re-asked the server.
+     ------------------------------------------------------------ */
+  console.log("\n55a8. WHEN SOMEBODY ELSE REMOVES YOU");
+  {
+    /* hold the fake's options so the test can change what the server
+       says mid-flight, the way a real server would after the other
+       person removed you */
+    const opts = signedIn({ convos: DISC_CONVOS.slice(), messages: [
+      { id: "m1", sender_id: "p1", body: "see you Thursday",
+        created_at: "2026-11-18T11:00:00Z", clip_path: null },
+    ] });
+    const { w } = await boot(true, opts);
+    await wait(200);
+    w.__peek('go("chats")'); await wait(250);
+    w.__peek('openChat("p1")'); await wait(350);
+
+    ok((w.__peek("S.connections") || []).includes("p1"), "you start out connected");
+    ok((w.__peek("Object.keys(S.threads)") || []).includes("p1"),
+       "with their messages on this device");
+
+    /* the other person removes you: the server simply stops listing it */
+    opts.convos = [];
+    w.__peek("refreshConvos(true)"); await wait(450);
+
+    ok(!(w.__peek("S.connections") || []).includes("p1"),
+       "after a refresh they are no longer a connection");
+    ok(!(w.__peek("Object.keys(S.threads)") || []).includes("p1"),
+       "and their messages are gone from this device too");
+    ok(w.__peek("chatId") === null,
+       "and you are taken out of the conversation rather than left typing into it");
+  }
+
+  console.log("\n55a9. COMING BACK TO A TAB LEFT OPEN");
+  {
+    const { w, api } = await boot(true, signedIn({ convos: DISC_CONVOS }));
+    await wait(200);
+    w.__peek('go("chats")'); await wait(300);
+    const before = api._log.filter((l) => l === "convoList").length;
+    w.__peek('lastConvoCheck = 0');
+    w.__peek('document.dispatchEvent(new Event("visibilitychange"))');
+    await wait(400);
+    const after = api._log.filter((l) => l === "convoList").length;
+    ok(after > before, "coming back to the app re-asks who you are connected to",
+       `convos calls before ${before}, after ${after}`);
   }
 
   console.log("\n55b. CHANGING YOUR MIND leaves it alone");

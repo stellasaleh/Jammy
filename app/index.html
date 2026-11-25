@@ -3105,7 +3105,30 @@ function ensureScreenData(view){
   }
   if(view==="feed"&&!LIVEPOSTS.length&&!feedLoading&&feedCursor===null)loadFeed();
   if(view==="disc"&&discoverMode()==="gigs"&&LIVEGIGS===null&&!gigsLoading)loadGigs();
+  /* Opening Messages re-asks the server who you are actually talking to.
+     Without this, a connection somebody ended on their phone went on
+     looking live on yours until the whole app was reloaded. */
+  if(view==="chats")refreshConvos();
 }
+
+/* One place that re-checks conversations, throttled so that flicking
+   between tabs doesn't hammer the server. */
+let lastConvoCheck=0, convoChecking=false;
+function refreshConvos(force){
+  if(!LIVE||convoChecking)return;
+  const now=Date.now();
+  if(!force&&now-lastConvoCheck<8000)return;
+  lastConvoCheck=now;convoChecking=true;
+  Promise.resolve(loadConvos()).finally(()=>{convoChecking=false});
+}
+
+/* An app left open in a background tab learns nothing. Coming back to
+   it is the moment to find out what changed while it was away — a
+   connection ended, a message arrived, a request answered. */
+document.addEventListener("visibilitychange",()=>{
+  if(document.visibilityState==="visible")refreshConvos(true);
+});
+window.addEventListener("focus",()=>refreshConvos());
 
 function refreshDiscover(){
   const gigMode=discoverMode()==="gigs";
@@ -3846,6 +3869,36 @@ async function loadConvos(){
     if(row.unread>0)S.unread[key]=row.unread;else delete S.unread[key];
   });
   remember(seen);
+
+  /* Clear out what the server no longer has.
+
+     When somebody removes you as a connection, the server drops the
+     conversation for both of you — but this device kept its own copy of
+     the messages in S.threads and went on showing them. The person on
+     the other end reported still being connected and still having the
+     thread, and this is why: nothing here ever threw anything away.
+
+     Anything cached for a DM the server no longer lists goes now. Band
+     threads are left alone: they come and go with band membership, which
+     is a different thing. */
+  const live=new Set(LIVECONVOS.map(r=>r.kind==="band"?r.band_id:r.other_id).filter(Boolean));
+  const bandKeys=new Set(myBandList().map(b=>b.id));
+  let dropped=[];
+  Object.keys(S.threads||{}).forEach(key=>{
+    if(live.has(key)||bandKeys.has(key))return;
+    delete S.threads[key];delete S.unread[key];
+    dropped.push(key);
+  });
+  (S.connections||[]).forEach(()=>{});          /* already rebuilt above */
+
+  /* If they were reading the conversation that just vanished, take them
+     out of it rather than leaving them typing into nothing. */
+  if(chatId&&!isBand&&dropped.includes(chatId)){
+    chatId=null;stopWatchingThread();
+    $("#chat").classList.remove("on");
+    toast("That connection has ended");
+  }
+
   save();updateBadge();renderChats();
 }
 
@@ -4355,11 +4408,11 @@ function personMenu(p, opts){
   }
   if(connected(p.id)){
     rows.push({label:"Remove connection",
-      note:"Ends it for both of you. They aren't told.",
+      note:"Ends it for both of you. We don't notify them.",
       icon:ICON_UNLINK, danger:true, go:()=>confirmDisconnect(p)});
   }
   rows.push({label:"Block "+first,
-    note:"They can't see you or reach you, and aren't told",
+    note:"They can't see you or reach you. We don't notify them.",
     icon:ICON_BLOCK, danger:true, go:()=>confirmBlock(p)});
   rows.push({label:"Report "+first, note:"Sent to us and read by a person",
     icon:ICON_FLAG, danger:true, go:()=>openReport(p.id)});
@@ -4417,7 +4470,8 @@ function confirmBlock(p){
     <h2 style="font-size:20px;margin:6px 0 8px">Block ${esc(p.name)}?</h2>
     <p class="dimtext" style="font-size:14px;line-height:1.55;margin:0 0 6px">
       ${esc(first)} won't be able to find you, see anything you post, or message
-      you. You won't see them either. ${esc(first)} isn't told.</p>
+      you. You won't see them either. We don't notify ${esc(first)}, though
+      they may notice you've gone.</p>
     <p class="dimtext" style="font-size:14px;line-height:1.55;margin:0 0 16px">
       If you're connected, that ends too. You can undo this in Settings,
       under Account and safety.</p>
@@ -4456,7 +4510,8 @@ function confirmDisconnect(p){
       You'll both drop out of each other's connections, and your conversation
       disappears for both of you. That part can't be undone.</p>
     <p class="dimtext" style="font-size:14px;line-height:1.55;margin:0 0 16px">
-      ${esc(p.name.split(" ")[0])} isn't told. You'll each show up in the
+      We don't notify ${esc(p.name.split(" ")[0])}, though they may notice
+      the connection has gone. You'll each show up in the
       other's Discover again, so you can connect later if you both want to —
       but you'd be starting the conversation over.</p>
     <button class="btn" id="dc-no" style="width:100%">Keep the connection</button>
