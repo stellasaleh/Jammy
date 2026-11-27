@@ -1770,6 +1770,36 @@ const POOL=()=>LIVE?LIVEPOOL:ARTISTS;
 const A=id=>POOL().find(x=>x.id===id)||KNOWN.get(id)||ARTISTS.find(x=>x.id===id)||
             (id==="me"||id===(S.me&&S.me.id)?S.me:null);
 
+/* A(id) returns null whenever this phone has not got the person cached,
+   and that happens more often than it looks: the database hides anyone
+   blocked in either direction, a banned account stops being readable,
+   and anybody not in the current deck or conversation list was never
+   cached in the first place.
+
+   Every screen that lists people used to handle that with
+   `const p = A(id); if (!p) return;` — silently dropping the row. That
+   is how you ended up unable to unblock Hasan: his row was skipped, so
+   there was no button. The same line was in six places: the Messages
+   list, the connections list, the profile sheet, the report sheet, the
+   Connect button and the notification bell.
+
+   So: never null. An id is enough to draw a row and enough to act on.
+   `unknown` lets a screen say so if it wants to, and nothing has to
+   check for null any more. */
+function personOr(id,fallbackName){
+  const p=A(id);
+  if(p)return p;
+  /* the same shape rowToArtist() builds, with every field empty rather
+     than missing: the screens below put these straight into the page,
+     and esc(undefined) prints the word "undefined" at the reader */
+  return {id:id,name:fallbackName||"Someone on Jammy",handle:"",
+          role:"",city:"",want:"",bio:"",infl:"",avail:"",
+          instruments:[],genres:[],seeking:[],days:[],remote:false,
+          photo:null,tracks:[],replies:["(not on this phone)"],
+          likesYou:false,lat:null,lng:null,unknown:true};
+}
+
+
 const HOURS=h=>new Date(Date.now()-h*3600000).toISOString();
 
 const POST_TYPES=[
@@ -2796,7 +2826,12 @@ S.requested=S.requested||{};
    "Connected" — which was simply untrue. The server never heard about it,
    so no conversation existed, and every message afterwards failed. */
 async function connect(id,silent){
-  const p=A(id);if(!p)return;
+  //  personOr, not A(): if the profile isn't in the cache (a block was
+  //  lifted, a card arrived from the server mid-session, the page was
+  //  reloaded on a deep link) the Connect button used to do nothing at
+  //  all when pressed. The request itself only needs the id, so send it
+  //  and use a neutral name in the toast rather than ignoring the press.
+  const p=personOr(id);
   if(connected(id)){openChat(id);return}
 
   if(LIVE){
@@ -4130,7 +4165,9 @@ function renderChats(){
     c.appendChild(el("div","empty",`<h3>No conversations yet</h3><p>Connect with someone in Discover or tap Connect on a post in the feed.</p>`));
   }
   S.connections.filter(id=>!isBlocked(id)).forEach(id=>{
-    const p=A(id);if(!p)return;
+    /* never skip: a conversation whose person this phone cannot name
+       still has messages in it, and dropping the row loses them */
+    const p=personOr(id);
     const th=threadOf(id),last=th[th.length-1];
     /* Live: prefer the preview the server sent. It knows the last message
        even for conversations this device has never opened. */
@@ -4365,15 +4402,20 @@ const ASKI='<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="curr
 
 /* ============ profile sheet ============ */
 function openProfile(id){
-  const p=A(id);if(!p)return;
+  /* never do nothing: a tap that silently fails reads as a broken app */
+  const p=personOr(id);
   const b=$("#sheetbody");
   b.innerHTML=`<div class="grabber"></div>
     <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px">
       <div class="av" style="width:64px;height:64px">${avatarOf(p)}</div>
       <div style="flex:1;min-width:0"><h2 style="font-size:22px">${esc(p.name)}</h2>
         <div style="color:var(--mag);font-weight:600;font-size:14px">${esc(p.role)}</div>
-        <div class="dimtext" style="font-size:13px">${esc(p.city)} · ${esc(p.handle)}</div></div>
+        <div class="dimtext" style="font-size:13px">${esc([p.city,p.handle].filter(Boolean).join(" · "))}</div></div>
     </div>
+    ${p.unknown?`<p class="dimtext" style="font-size:13px;margin:0 0 12px;line-height:1.5">
+      Jammy can't load this person's details right now — they may have left, or
+      one of you may have blocked the other. You can still message, remove or
+      report them from the menu.</p>`:""}
     ${p.lat?(()=>{const o=overlap(p);return `<div style="display:flex;gap:7px;flex-wrap:wrap;margin:0 0 12px">
       <span class="chip mag">${distLabel(o.mi)} away</span>
       <span class="chip">${o.score}% fit</span>
@@ -4506,7 +4548,9 @@ function openConnections(){
     <button class="btn ghost" id="cx-close" style="width:100%;margin-top:10px">Done</button>`;
   const host=$("#cx-list");
   ids.forEach(id=>{
-    const p=A(id);if(!p)return;
+    /* never skip: this is the screen for removing people, so a row you
+       cannot draw a name for is exactly the row you still need */
+    const p=personOr(id);
     const row=el("div","cxrow");
     row.innerHTML=`<div class="av" style="width:46px;height:46px">${avatarOf(p)}</div>
       <div class="t"><b>${esc(p.name)}</b><span>${esc([p.role,p.city].filter(Boolean).join(" · "))}</span></div>`;
@@ -5450,7 +5494,9 @@ async function reportUser(id,reason,note,opts){
   return true;
 }
 function openReport(id){
-  const p=A(id);if(!p)return;
+  /* never refuse: being unable to name somebody is no reason to stop
+     you reporting them, and the server only needs the id */
+  const p=personOr(id);
   const sb=$("#sheetbody");
   sb.innerHTML=`<div class="grabber"></div>
     <h2 style="font-size:21px;margin-bottom:4px">Report ${esc(p.name.split(" ")[0])}</h2>
@@ -6302,8 +6348,10 @@ function buildAlerts(){
     });
   });
   Object.keys(S.unread||{}).forEach(id=>{
-    const p=A(id)||Bnd(id);
-    if(p)out.push({id:"msg:"+id,kind:"msg",at:new Date().toISOString(),
+    /* never skip: an unread message is a fact about your inbox, and it
+       needs a notification whether or not this phone can name the sender */
+    const p=Bnd(id)||personOr(id);
+    out.push({id:"msg:"+id,kind:"msg",at:new Date().toISOString(),
       title:(p.name||"Someone")+" sent you a message",body:"Open the chat to reply.",chat:id,soon:true});
   });
   return out.sort((a,b)=>new Date(a.at)-new Date(b.at));

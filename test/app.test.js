@@ -1921,6 +1921,145 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
        "the button and the player agree on what is playing");
   }
 
+
+  /* ------------------------------------------------------------
+     THE SWEEP — people this phone cannot name
+
+     Hasan blocked hey; hey could then no longer see Hasan's posts,
+     and when she went to UNBLOCK him his row had no name on it,
+     because the "read profiles" rule hides anyone blocked either
+     way — including from the person who did the blocking.
+
+     That was the third bug of the same shape in a row: the database
+     rule was right, and the screen around it could not live with it.
+     So every screen that did `const p = A(id); if (!p) return;` was
+     swept. Five of them: Messages, Your connections, View profile,
+     Report, and the Connect button. Each one silently did NOTHING
+     when the person was not cached on this phone — no row, no sheet,
+     no request — which reads as a broken app rather than a missing
+     name.
+
+     These tests use an id the app has never seen a profile for, the
+     way the server leaves it after a block, a ban, a deletion, or a
+     reload on a deep link. Every one of them fails if the old
+     `if (!p) return;` is put back.
+     ------------------------------------------------------------ */
+  console.log("\n56. SOMEBODY THIS PHONE CANNOT NAME is still handled");
+
+  /* a connection whose profile the server will not hand over */
+  const ghost = (w) => w.__peek(
+    'S.connections=["ghost9"];' +
+    'S.threads["ghost9"]=[{f:"them",t:"are you around sunday?"}];' +
+    'save();renderChats();renderYou();'
+  );
+
+  console.log("\n56a. THE MESSAGES LIST keeps the conversation");
+  {
+    const { w } = await boot(true, signedIn({ convos: [] }));
+    await wait(200);
+    w.__peek('go("chats")'); await wait(200);
+    ghost(w); await wait(200);
+
+    ok(w.__peek('A("ghost9")') === null, "the app really has no profile for them");
+    const rows = [...w.document.querySelectorAll("#chats .crow")];
+    ok(rows.length === 1, "the conversation is still listed", "rows: " + rows.length);
+    const txt = rows.map((r) => r.textContent).join(" ");
+    ok(/are you around sunday/i.test(txt), "with the last message still readable");
+    ok(/Someone on Jammy/.test(txt), "under a plain stand-in name");
+    ok(!/undefined/.test(txt), "and no 'undefined' printed at the reader");
+  }
+
+  console.log("\n56b. AND THE ROW STILL OPENS THE MENU");
+  {
+    const { w, api } = await boot(true, signedIn({ convos: [] }));
+    await wait(200);
+    w.__peek('go("chats")'); await wait(200);
+    ghost(w); await wait(200);
+
+    const more = w.document.querySelector("#chats .crmore");
+    ok(!!more, "the more button is there on a nameless row");
+    more.click(); await wait(250);
+    const menu = w.document.querySelector("#sheetbody").textContent;
+    ok(/Remove connection/i.test(menu), "and offers Remove connection");
+    menuRow(w, /Remove connection/i); await wait(200);
+    w.document.querySelector("#dc-yes").click(); await wait(400);
+    ok(api._log.includes("disconnect:ghost9"),
+       "so you can get rid of somebody you cannot even see");
+  }
+
+  console.log("\n56c. YOUR CONNECTIONS lists them too");
+  {
+    const { w } = await boot(true, signedIn({ convos: [] }));
+    await wait(200);
+    w.__peek('go("chats")'); await wait(200);
+    ghost(w);
+    w.__peek('go("you")'); await wait(300);
+    w.document.querySelector('[data-s="conn"]').click(); await wait(300);
+
+    const rows = w.document.querySelectorAll(".cxrow");
+    ok(rows.length === 1, "the row is drawn, not skipped", "rows: " + rows.length);
+    const txt = w.document.querySelector("#sheetbody").textContent;
+    ok(!/undefined/.test(txt), "with nothing broken-looking on it");
+    ok(!!w.document.querySelector(".cxmore"), "and it has its own menu button");
+  }
+
+  console.log("\n56d. VIEW PROFILE opens instead of doing nothing");
+  {
+    const { w } = await boot(true, signedIn({ convos: [] }));
+    await wait(200);
+    w.__peek('go("chats")'); await wait(200);
+    ghost(w);
+    w.__peek('openProfile("ghost9")'); await wait(250);
+
+    ok(w.document.querySelector("#sheet").classList.contains("on"),
+       "the sheet opens");
+    const txt = w.document.querySelector("#sheetbody").textContent;
+    ok(/can't load this person's details/i.test(txt),
+       "and says plainly why there is nothing on it");
+    ok(!/undefined/.test(txt), "rather than printing 'undefined' at them");
+  }
+
+  console.log("\n56e. REPORTING THEM still works");
+  {
+    const { w, api } = await boot(true, signedIn({ convos: [] }));
+    await wait(200);
+    w.__peek('go("chats")'); await wait(200);
+    ghost(w);
+    w.__peek('openReport("ghost9")'); await wait(250);
+
+    const sb = w.document.querySelector("#sheetbody");
+    ok(/Pick what happened/i.test(sb.textContent), "the report form opens");
+    sb.querySelector("[data-r]").click(); await wait(80);
+    w.document.querySelector("#rp-send").click(); await wait(400);
+    ok(api._log.some((l) => l.startsWith("report:")),
+       "and the report reaches the server — it only ever needed the id");
+  }
+
+  console.log("\n56f. THE BELL still tells you about their message");
+  {
+    const { w } = await boot(true, signedIn({ convos: [] }));
+    await wait(200);
+    w.__peek('go("chats")'); await wait(200);
+    ghost(w);
+    w.__peek('S.unread["ghost9"]=1;save();');
+    const alerts = w.__peek("buildAlerts()");
+    const mine = alerts.filter((a) => a.kind === "msg");
+    ok(mine.length === 1, "an unread message from a nameless person is still an alert",
+       "alerts: " + JSON.stringify(alerts.map((a) => a.kind)));
+    ok(/sent you a message/.test(mine[0] && mine[0].title),
+       "and it says what happened");
+    ok(!/undefined/.test(mine[0] && mine[0].title), "without the word undefined in it");
+  }
+
+  console.log("\n56g. AND THE CONNECT BUTTON is not dead");
+  {
+    const { w, api } = await boot(true, signedIn({ convos: [] }));
+    await wait(250);
+    await w.__peek('connect("ghost7")'); await wait(400);
+    ok(api._log.includes("swipe:yes:ghost7"),
+       "pressing Connect on a card we have no profile for still asks them");
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
