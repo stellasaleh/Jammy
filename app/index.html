@@ -3103,7 +3103,14 @@ function ensureScreenData(view){
     if(LIVECHART===null&&!chartLoading)loadChart();
     if(RISING===null&&!risingLoading)loadRising();
   }
-  if(view==="feed"&&!LIVEPOSTS.length&&!feedLoading&&feedCursor===null)loadFeed();
+  /* The feed used to load once and never again: the condition below only
+     fires while LIVEPOSTS is empty, so after the first visit, coming back
+     to Feed did nothing. Hasan posted and it never reached hey's phone.
+     Now the first visit loads it and every later visit re-asks. */
+  if(view==="feed"){
+    if(!LIVEPOSTS.length&&!feedLoading&&feedCursor===null)loadFeed();
+    else refreshFeed();
+  }
   if(view==="disc"&&discoverMode()==="gigs"&&LIVEGIGS===null&&!gigsLoading)loadGigs();
   /* Opening Messages re-asks the server who you are actually talking to.
      Without this, a connection somebody ended on their phone went on
@@ -3122,13 +3129,37 @@ function refreshConvos(force){
   Promise.resolve(loadConvos()).finally(()=>{convoChecking=false});
 }
 
+/* Re-ask for page one of the feed, throttled. Posting, liking and
+   commenting all refresh it already; this is for everything somebody
+   ELSE did. */
+let lastFeedCheck=0, feedChecking=false;
+function refreshFeed(force){
+  if(!LIVE||feedChecking||feedLoading)return;
+  const now=Date.now();
+  if(!force&&now-lastFeedCheck<8000)return;
+  lastFeedCheck=now;feedChecking=true;
+  feedCursor=null;feedCursorId=null;feedEnd=false;
+  Promise.resolve(loadFeed()).finally(()=>{feedChecking=false});
+}
+
+/* A new post anywhere is a nudge to refetch, not something to render
+   from directly — the realtime row has no author name or counts on it. */
+let postWatch=null;
+function watchFeed(){
+  if(!LIVE||postWatch)return;
+  try{ postWatch=DB.watchPosts(()=>refreshFeed(true)); }catch(e){ postWatch=null }
+}
+function stopWatchingFeed(){
+  if(postWatch){try{DB.unwatch(postWatch)}catch(e){}postWatch=null}
+}
+
 /* An app left open in a background tab learns nothing. Coming back to
    it is the moment to find out what changed while it was away — a
-   connection ended, a message arrived, a request answered. */
+   connection ended, a message arrived, somebody posted. */
 document.addEventListener("visibilitychange",()=>{
-  if(document.visibilityState==="visible")refreshConvos(true);
+  if(document.visibilityState==="visible"){refreshConvos(true);refreshFeed(true)}
 });
-window.addEventListener("focus",()=>refreshConvos());
+window.addEventListener("focus",()=>{refreshConvos();refreshFeed()});
 
 function refreshDiscover(){
   const gigMode=discoverMode()==="gigs";
@@ -6500,6 +6531,8 @@ const DB = {
 
   /* ---- the feed ---- */
   feedPage(before,n,beforeId){ return JammyAPI.feed.posts(before,n,beforeId); },
+  watchPosts(fn){ return JammyAPI.chat.watchPosts(fn); },
+  unwatch(ch){ return JammyAPI.chat.unsubscribe(ch); },
   addPost(body,tag,fields,mediaPath,trackId){
     return JammyAPI.sb.rpc("add_post",{
       p_body:body||"", p_tag:tag||null, p_fields:fields||{},
@@ -6755,7 +6788,7 @@ function renderStep(){
           /* Signed in. If a profile already exists, this is a returning
              user and the rest of onboarding is just in their way. */
           const me=await DB.loadMe();
-          if(me.data){adoptProfile(me.data);S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();loadMyTracks();loadRising();
+          if(me.data){adoptProfile(me.data);S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();loadMyTracks();loadRising();watchFeed();
             $("#onb").classList.remove("on");go("disc");toast("Welcome back");return}
         }
         obGo(3);toast("Verified");
@@ -6948,11 +6981,14 @@ async function finishOnboarding(){
   }else if(obDraft.loc){
     S.me.loc=obDraft.loc;
   }
-  S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();loadMyTracks();loadRising();obGo(10);
+  S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();loadMyTracks();loadRising();watchFeed();obGo(10);
 }
 $("#ob-back").onclick=()=>obGo(obStep-1);
 $("#ob-skip").onclick=()=>obGo(obStep+1);
 function signOut(){
+  /* let go of the realtime channel, or it keeps listening for the
+     account that just left */
+  stopWatchingFeed();
   if(LIVE)JammyAPI.auth.signOut();
   S.onboarded=false;S.account=null;save();
   obStep=0;obDraft={instruments:[],genres:[],goal:null,agreed:false,method:null};
@@ -6979,7 +7015,7 @@ async function resumeSession(){
   if(me.data){
     adoptProfile(me.data);S.onboarded=true;save();
     $("#onb").classList.remove("on");renderAll();
-    loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();loadMyTracks();loadRising();
+    loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();loadMyTracks();loadRising();watchFeed();
     setTimeout(()=>locateOnLaunch(),250);
   }else{
     /* Signed in, but the profile was never finished — drop them back

@@ -167,3 +167,39 @@ select t('there is a way out of a connection that is not a block',
 
 select t('and an ordinary member is allowed to use it',
          has_function_privilege('app_user', 'public.disconnect_from(uuid)', 'execute'));
+
+-- ------------------------------------------------------------
+--  EVERYTHING THAT IS MEANT TO BE LIVE (26_feed_live.sql)
+--
+--  Hasan posted and it never reached hey's phone. `posts` was not
+--  in Supabase's realtime publication — post_likes and
+--  post_comments were, from back in 04, but not the table they
+--  hang off. So a LIKE arrived live and the post being liked
+--  never did.
+--
+--  That is the third table found missing from this publication:
+--  `messages` was the reason chat needed a refresh. Hence one
+--  check over the whole set rather than another one-off.
+-- ------------------------------------------------------------
+select t('a new post reaches other people without a reload',
+         exists (select 1 from pg_publication_tables
+                  where pubname = 'supabase_realtime' and tablename = 'posts'));
+
+select t('and every table meant to be live is published',
+         (select count(*) from pg_publication_tables
+           where pubname = 'supabase_realtime'
+             and tablename in ('messages','conversation_members',
+                               'posts','post_likes','post_comments')) = 5);
+
+-- the standing check reports by raising, so wrap it in something
+-- that returns a boolean this file's t() can take
+create or replace function pg_temp.live_check_ok() returns boolean
+language plpgsql as $fn$
+begin
+  perform assert_live_tables_are_published();
+  return true;
+exception when others then
+  return false;
+end $fn$;
+
+select t('and the standing check agrees', pg_temp.live_check_ok());

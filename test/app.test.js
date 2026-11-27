@@ -73,6 +73,9 @@ function makeAPI(opts = {}) {
       send: async (c, body) => { log.push("send:" + body); return opts.sendFails ? err(opts.sendFails) : { data: { id: "m99", created_at: "2026-11-18T12:00:00Z" }, error: null }; },
       subscribe: (c, cb) => { log.push("subscribe:" + c); api._push = cb; return { ch: c }; },
       unsubscribe: (ch) => { log.push("unsubscribe"); },
+      /* records the handler so a test can play the part of somebody else
+         posting, the way the real realtime channel would */
+      watchPosts: (fn) => { log.push("watchPosts"); api._onNewPost = fn; return { ch: "feed:new" }; },
       markRead: async (c) => { log.push("markRead:" + c); return { data: {}, error: null }; },
     },
     feed: {
@@ -664,11 +667,22 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     { user_id: "p1", display_name: "Mina Okafor", handle: "minabass", photo_path: null,
       instruments: ["Bass"], role_label: "Bass", is_admin: false, on_jammy: true },
   ];
+  /* Dated from today, not written down. These were fixed dates in
+     November 2026, and once those days passed the practice stopped being
+     the next event and this fixture started failing on the calendar
+     rather than on anything in the app. Anything asserting "the next
+     one" has to be relative to now. */
+  const inDays = (n, h) => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() + n);
+    d.setUTCHours(h, 0, 0, 0);
+    return d.toISOString();
+  };
   const BANDEVENTS = [
-    { id: "e1", kind: "practice", starts_at: "2026-11-26T19:00:00Z", ends_at: null,
+    { id: "e1", kind: "practice", starts_at: inDays(2, 19), ends_at: null,
       place: "Sound Museum", address: "Room 214", note: "bring the PA",
       visibility: "members", mine: true },
-    { id: "e2", kind: "gig", starts_at: "2026-11-29T20:00:00Z", ends_at: null,
+    { id: "e2", kind: "gig", starts_at: inDays(5, 20), ends_at: null,
       place: "Lilypad", address: "1353 Cambridge St", note: "doors 8",
       visibility: "public", mine: true },
   ];
@@ -1708,6 +1722,81 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const after = api._log.filter((l) => l === "convoList").length;
     ok(after > before, "coming back to the app re-asks who you are connected to",
        `convos calls before ${before}, after ${after}`);
+  }
+
+  /* ------------------------------------------------------------
+     SOMEBODY ELSE POSTS
+
+     Hasan posted and nothing appeared on hey's phone. Two
+     reasons: `posts` was never in Supabase's realtime
+     publication (post_likes and post_comments were, from back in
+     04, but not the table they hang off), and the feed only ever
+     loaded once — the condition guarding it fired while
+     LIVEPOSTS was empty, so coming back to Feed did nothing.
+     ------------------------------------------------------------ */
+  console.log("\n55b0. A POST SOMEBODY ELSE MADE");
+  {
+    const opts = signedIn({ feed: [] });
+    const { w, api } = await boot(true, opts);
+    await wait(250);
+    w.__peek('go("feed")'); await wait(300);
+
+    ok(api._log.includes("watchPosts"),
+       "the app listens for posts other people make");
+
+    const first = api._log.filter((l) => l.startsWith("feedPage")).length;
+
+    /* Hasan posts. The server now has it; this phone does not. */
+    opts.feed = [{ id: "np1", author_id: "p9", body: "drummer needed Thursday",
+      tag: "looking", created_at: new Date().toISOString(), like_count: 0,
+      comment_count: 0, author_name: "Hasan", author_handle: "hasan",
+      author_city: "Boston", author_photo: null, liked_by_me: false, mine: false }];
+
+    w.__peek("lastFeedCheck = 0");
+    api._onNewPost && api._onNewPost({ id: "np1", author_id: "p9" });
+    await wait(500);
+
+    ok(api._log.filter((l) => l.startsWith("feedPage")).length > first,
+       "and refetches when one arrives");
+    ok(/drummer needed Thursday/.test(w.document.querySelector("#feed").textContent),
+       "so the post actually shows up");
+  }
+
+  console.log("\n55b1. COMING BACK TO THE FEED");
+  {
+    /* the feed must already have something in it, or the old
+       load-once guard ("only if LIVEPOSTS is empty") fires anyway and
+       this test passes against the very bug it is here to catch */
+    const opts = signedIn({ feed: [{ id: "old1", author_id: "p9",
+      body: "bass player here", tag: "looking",
+      created_at: "2026-11-20T10:00:00Z", like_count: 0, comment_count: 0,
+      author_name: "Hasan", author_handle: "hasan", author_city: "Boston",
+      author_photo: null, liked_by_me: false, mine: false }] });
+    const { w, api } = await boot(true, opts);
+    await wait(250);
+    w.__peek('go("feed")'); await wait(300);
+    w.__peek('go("you")'); await wait(150);
+
+    const before = api._log.filter((l) => l.startsWith("feedPage")).length;
+    w.__peek("lastFeedCheck = 0");
+    w.__peek('go("feed")'); await wait(400);
+    ok(api._log.filter((l) => l.startsWith("feedPage")).length > before,
+       "opening Feed again re-asks the server",
+       "it used to load once and never again");
+  }
+
+  console.log("\n55b2. COMING BACK TO THE APP");
+  {
+    const opts = signedIn({ feed: [] });
+    const { w, api } = await boot(true, opts);
+    await wait(250);
+    w.__peek('go("feed")'); await wait(300);
+    const before = api._log.filter((l) => l.startsWith("feedPage")).length;
+    w.__peek("lastFeedCheck = 0");
+    w.__peek('document.dispatchEvent(new Event("visibilitychange"))');
+    await wait(400);
+    ok(api._log.filter((l) => l.startsWith("feedPage")).length > before,
+       "returning to the app checks for posts too");
   }
 
   console.log("\n55b. CHANGING YOUR MIND leaves it alone");

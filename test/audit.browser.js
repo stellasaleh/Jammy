@@ -105,7 +105,7 @@ window.__api = {
           messages: () => ok([]),
           send: (c,b) => { log("send:"+b); return maybe("send", { id:"m1" }); },
           dmWith: () => ok("c1"), bandConversation: () => ok("c2"),
-          subscribe: () => ({}), unsubscribe: () => {}, markRead: () => ok({}),
+          subscribe: () => ({}), unsubscribe: () => {}, watchPosts: () => ({}), markRead: () => ok({}),
           people: () => ok([]) },
   feed: { posts: () => maybe("feed", POP ? feed : []),
           comments: () => ok([]), comment: () => ok({}), deleteComment: () => ok({}),

@@ -303,6 +303,25 @@
     },
     unsubscribe: (channel) => sb.removeChannel(channel),
 
+    /* Somebody, anybody, posted.
+
+       This hands back only the signal, not the row. A realtime payload
+       carries the raw `posts` record, which lacks the author's name,
+       handle and photo and the counts that feed_page assembles — so
+       rendering straight from it would put a nameless post on screen.
+       The app refetches page one instead: cheap, and always the right
+       shape. */
+    watchPosts(onNewPost) {
+      return sb
+        .channel("feed:new")
+        .on(
+          "postgres_changes",
+          { event: "INSERT", schema: "public", table: "posts" },
+          (payload) => onNewPost(payload.new)
+        )
+        .subscribe();
+    },
+
     markRead: (conversationId) =>
       call(async () => {
         const me = await uid();
