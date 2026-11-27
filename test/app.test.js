@@ -1768,8 +1768,10 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   console.log("\n55a11. AND LEARNS ABOUT ONE MADE ELSEWHERE");
   {
     const { w, api } = await boot(true, signedIn({
+      /* my_blocks() returns the name on the row itself — joining
+         profiles never worked, because the block hides the profile */
       serverBlocks: [{ blocked_id: "p9", created_at: "2026-11-02T10:00:00Z",
-                       profiles: { display_name: "Hasan", handle: "hasan" } }],
+                       display_name: "Hasan", handle: "hasan", city: "Boston" }],
     }));
     await wait(400);
     ok((w.__peek("S.blocks") || []).some((b) => b.id === "p9"),
@@ -1791,7 +1793,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   {
     const { w, api } = await boot(true, signedIn({
       serverBlocks: [{ blocked_id: "zz-unknown", created_at: "2026-11-24T10:00:00Z",
-                       profiles: { display_name: "Hasan Rahimi", handle: "hasan" } }],
+                       display_name: "Hasan Rahimi", handle: "hasan", city: "Boston" }],
     }));
     await wait(400);
     ok((w.__peek("S.blocks") || []).some((b) => b.id === "zz-unknown"),

@@ -3144,12 +3144,17 @@ async function loadBlocks(){
   if(r.error||!Array.isArray(r.data))return;     /* keep what we have */
   const serverIds=r.data.map(b=>b.blocked_id);
   const keep=(S.blocks||[]).filter(b=>serverIds.includes(b.id));
-  const known=new Set(keep.map(b=>b.id));
+  const byId=new Map(keep.map(b=>[b.id,b]));
   r.data.forEach(b=>{
-    if(known.has(b.blocked_id))return;
+    /* my_blocks() carries the name, so attach it to rows we already
+       had as well — otherwise somebody blocked before this existed
+       stays nameless on the Blocked accounts screen for ever. */
+    const name=b.display_name||null;
+    const had=byId.get(b.blocked_id);
+    if(had){ if(name)had.name=name; if(b.city)had.city=b.city; return }
     keep.push({id:b.blocked_id,reason:null,note:"",
       at:b.created_at||new Date().toISOString(),
-      name:(b.profiles&&b.profiles.display_name)||null});
+      name:name,city:b.city||null,handle:b.handle||null});
   });
   const changed=keep.length!==(S.blocks||[]).length;
   S.blocks=keep;save();
@@ -6046,7 +6051,12 @@ function openBlocked(){
     const name=(p&&p.name)||bk.name||"Someone you blocked";
     const row=el("div","rrow");
     row.innerHTML=`<div class="av">${p?avatarOf(p):`<span class="ph">${esc(initials(name))}</span>`}</div>
-      <div class="t"><b>${esc(name)}</b><span>Blocked ${esc(dayPhrase(bk.at).toLowerCase())}${bk.reason?" · "+esc(bk.reason):""}</span></div>`;
+      <div class="t"><b>${esc(name)}</b><span>${
+        [bk.handle?"@"+bk.handle:(p&&p.handle?"@"+p.handle:""),
+         bk.city||(p&&p.city)||"",
+         "Blocked "+dayPhrase(bk.at).toLowerCase(),
+         bk.reason||""].filter(Boolean).map(esc).join(" · ")
+      }</span></div>`;
     const un=el("button","minibtn","Unblock");
     un.onclick=async()=>{
       un.disabled=true;un.textContent="…";

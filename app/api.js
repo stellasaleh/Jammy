@@ -693,8 +693,19 @@
         const me = await uid();
         return sb.from("blocks").delete().eq("blocker_id", me).eq("blocked_id", id);
       }),
-    blocked: () =>
-      call(() => sb.from("blocks").select("blocked_id, created_at, profiles!blocks_blocked_id_fkey(display_name, handle)")),
+    /* Who I blocked, with their names.
+
+       This used to read the blocks table and join profiles, and the
+       join always came back empty: "read profiles" hides anyone blocked
+       in either direction, so you cannot read the profile of the person
+       you blocked BECAUSE you blocked them. The Blocked accounts screen
+       ended up listing rows with no name on them — on the one screen
+       whose whole job is choosing between people.
+
+       my_blocks() runs with the definer's rights and returns only rows
+       where blocker_id is you, so it tells you about your own actions
+       and nothing about who has blocked you. */
+    blocked: () => call(() => sb.rpc("my_blocks")),
     report: ({ userId, postId, messageId, reason, note }) =>
       call(async () => {
         const me = await uid();

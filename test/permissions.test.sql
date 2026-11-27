@@ -203,3 +203,51 @@ exception when others then
 end $fn$;
 
 select t('and the standing check agrees', pg_temp.live_check_ok());
+
+-- ------------------------------------------------------------
+--  SEEING WHO YOU BLOCKED (27_my_blocks.sql)
+--
+--  A catch-22. "read profiles" hides anyone blocked either way,
+--  which is right — but it applied on the Blocked accounts
+--  screen too, so the app's join to profiles came back empty and
+--  the list showed rows with no names on them. You could not see
+--  who you had blocked, BECAUSE you had blocked them.
+--
+--  What must stay true: this tells you about your own actions
+--  and says nothing about who has blocked you.
+-- ------------------------------------------------------------
+set role app_user;
+set request.jwt.claim.sub = 'aaaaaaaa-0000-0000-0000-000000000001';
+insert into blocks (blocker_id, blocked_id)
+values ('aaaaaaaa-0000-0000-0000-000000000001',
+        'bbbbbbbb-0000-0000-0000-000000000002')
+on conflict do nothing;
+
+select t('the old way gave a blocked person no name',
+         (select p.display_name is null
+            from blocks b left join profiles p on p.id = b.blocked_id
+           where b.blocker_id = auth.uid()
+             and b.blocked_id = 'bbbbbbbb-0000-0000-0000-000000000002'));
+
+select t('my_blocks lists them',
+         (select count(*) = 1 from my_blocks()
+           where blocked_id = 'bbbbbbbb-0000-0000-0000-000000000002'));
+
+select t('and gives their name, which is the whole point',
+         (select display_name is not null and length(display_name) > 0
+            from my_blocks()
+           where blocked_id = 'bbbbbbbb-0000-0000-0000-000000000002'));
+reset role;
+
+--  and the rule that must not break: being blocked stays invisible
+set role app_user;
+set request.jwt.claim.sub = 'bbbbbbbb-0000-0000-0000-000000000002';
+select t('being blocked still tells you nothing',
+         (select count(*) = 0 from my_blocks()));
+reset role;
+
+set role app_user;
+set request.jwt.claim.sub = 'aaaaaaaa-0000-0000-0000-000000000001';
+delete from blocks where blocker_id = auth.uid()
+                     and blocked_id = 'bbbbbbbb-0000-0000-0000-000000000002';
+reset role;
