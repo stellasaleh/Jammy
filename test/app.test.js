@@ -118,7 +118,9 @@ function makeAPI(opts = {}) {
       remove: async (w) => { log.push("deleteAccount:" + w); return opts.deleteAccountFails ? err(opts.deleteAccountFails) : { data: { deleted: true }, error: null }; },
     },
     safety: {
-      blocked: async () => ({ data: [], error: null }),
+      /* the server's list of who you've blocked — the app used to never
+         ask for this, so a stale local entry hid somebody for ever */
+      blocked: async () => { log.push("blocked"); return { data: opts.serverBlocks || [], error: null }; },
       block: async (id) => {
         log.push("block:" + id);
         if (opts.blockFails) return err(opts.blockFails);
@@ -1734,6 +1736,81 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
      loaded once — the condition guarding it fired while
      LIVEPOSTS was empty, so coming back to Feed did nothing.
      ------------------------------------------------------------ */
+  /* ------------------------------------------------------------
+     A BLOCK THAT ONLY EXISTED ON ONE PHONE
+
+     S.blocks was written by this phone and never read back from
+     anywhere. The feed, Discover and the chat list all hide
+     people using it. So an entry left there after the block was
+     lifted on the server hid somebody's posts for ever, with
+     nothing on screen to say why.
+     ------------------------------------------------------------ */
+  console.log("\n55a10. THE BLOCKED LIST AGREES WITH THE SERVER");
+  {
+    const { w, api } = await boot(true, signedIn({ serverBlocks: [] }));
+    await wait(350);
+    ok(api._log.includes("blocked"), "the app asks the server who is blocked");
+
+    /* Now put this phone in the state the bug leaves it in: a block in
+       local storage that the server does not have. boot() takes no
+       starting state, so set it directly — otherwise S.blocks is empty
+       and the check below passes without testing anything. */
+    w.__peek('S.blocks = [{id:"p9",reason:null,note:"",at:"2026-11-01T10:00:00Z"}]');
+    await wait(30);
+    ok((w.__peek("S.blocks") || []).length === 1, "this phone thinks somebody is blocked");
+
+    w.__peek("loadBlocks()"); await wait(400);
+    ok((w.__peek("S.blocks") || []).length === 0,
+       "and a block the server does not have is dropped",
+       "it used to hide that person's posts for ever, with nothing on screen to say why");
+  }
+
+  console.log("\n55a11. AND LEARNS ABOUT ONE MADE ELSEWHERE");
+  {
+    const { w, api } = await boot(true, signedIn({
+      serverBlocks: [{ blocked_id: "p9", created_at: "2026-11-02T10:00:00Z",
+                       profiles: { display_name: "Hasan", handle: "hasan" } }],
+    }));
+    await wait(400);
+    ok((w.__peek("S.blocks") || []).some((b) => b.id === "p9"),
+       "a block made on another device shows up here too");
+  }
+
+  /* ------------------------------------------------------------
+     BLOCK SOMEBODY, THEN TRY TO UNBLOCK THEM
+
+     The Blocked accounts list skipped any row whose person the app
+     could not identify — and blocking is exactly what makes it
+     forget them, since they drop out of the deck and the
+     conversation list. So the person blocked most recently was the
+     least likely to be listed, and with no row there was no
+     Unblock button. You could block somebody and then have no way
+     to undo it.
+     ------------------------------------------------------------ */
+  console.log("\n55a12. UNBLOCKING SOMEBODY THE APP HAS FORGOTTEN");
+  {
+    const { w, api } = await boot(true, signedIn({
+      serverBlocks: [{ blocked_id: "zz-unknown", created_at: "2026-11-24T10:00:00Z",
+                       profiles: { display_name: "Hasan Rahimi", handle: "hasan" } }],
+    }));
+    await wait(400);
+    ok((w.__peek("S.blocks") || []).some((b) => b.id === "zz-unknown"),
+       "the block is known about");
+
+    w.__peek("openBlocked()"); await wait(250);
+    const sheet = w.document.querySelector("#sheetbody");
+    ok(/Hasan Rahimi/.test(sheet.textContent),
+       "somebody the app no longer knows still appears on the list",
+       "their row used to be skipped, so there was nothing to press");
+
+    const btn = [...sheet.querySelectorAll("button")].find((b) => /Unblock/i.test(b.textContent));
+    ok(!!btn, "and there is an Unblock button");
+    btn.click(); await wait(400);
+    ok(api._log.some((l) => l.startsWith("unblock:")), "which actually unblocks them");
+    ok(!(w.__peek("S.blocks") || []).some((b) => b.id === "zz-unknown"),
+       "and they come off the list");
+  }
+
   console.log("\n55b0. A POST SOMEBODY ELSE MADE");
   {
     const opts = signedIn({ feed: [] });

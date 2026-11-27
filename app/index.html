@@ -3129,6 +3129,33 @@ function refreshConvos(force){
   Promise.resolve(loadConvos()).finally(()=>{convoChecking=false});
 }
 
+/* Who you have blocked, according to the SERVER.
+
+   S.blocks was written only by this phone and never read back from
+   anywhere. The feed, Discover and the chat list all hide people using
+   that local list, so a block made on another device was invisible here
+   — and worse, a block that had been LIFTED on the server stayed in
+   this phone's storage forever, quietly hiding somebody's posts with
+   nothing on screen to explain it. The server is the truth; this makes
+   the phone agree with it. */
+async function loadBlocks(){
+  if(!LIVE)return;
+  const r=await DB.blocked();
+  if(r.error||!Array.isArray(r.data))return;     /* keep what we have */
+  const serverIds=r.data.map(b=>b.blocked_id);
+  const keep=(S.blocks||[]).filter(b=>serverIds.includes(b.id));
+  const known=new Set(keep.map(b=>b.id));
+  r.data.forEach(b=>{
+    if(known.has(b.blocked_id))return;
+    keep.push({id:b.blocked_id,reason:null,note:"",
+      at:b.created_at||new Date().toISOString(),
+      name:(b.profiles&&b.profiles.display_name)||null});
+  });
+  const changed=keep.length!==(S.blocks||[]).length;
+  S.blocks=keep;save();
+  if(changed)renderAll();
+}
+
 /* Re-ask for page one of the feed, throttled. Posting, liking and
    commenting all refresh it already; this is for everything somebody
    ELSE did. */
@@ -3157,7 +3184,7 @@ function stopWatchingFeed(){
    it is the moment to find out what changed while it was away — a
    connection ended, a message arrived, somebody posted. */
 document.addEventListener("visibilitychange",()=>{
-  if(document.visibilityState==="visible"){refreshConvos(true);refreshFeed(true)}
+  if(document.visibilityState==="visible"){refreshConvos(true);refreshFeed(true);loadBlocks()}
 });
 window.addEventListener("focus",()=>{refreshConvos();refreshFeed()});
 
@@ -6004,12 +6031,31 @@ function openBlocked(){
     <div id="bl-list"></div>`;
   const host=sb.querySelector("#bl-list");
   list.forEach(bk=>{
-    const p=A(bk.id);if(!p)return;
+    /* Draw the row even when we no longer know who this is.
+
+       It used to `return` when A(bk.id) came back null, silently
+       skipping the row — and blocking somebody is precisely what makes
+       the app forget them, since they drop out of the deck and the
+       conversation list. So the person you blocked most recently was
+       the one least likely to appear here, and with no row there was
+       no Unblock button: you could block somebody and then have no way
+       on this screen to undo it. loadBlocks() now carries the name
+       down from the server, and when even that is missing we draw the
+       row anyway, because the button matters more than the name. */
+    const p=A(bk.id);
+    const name=(p&&p.name)||bk.name||"Someone you blocked";
     const row=el("div","rrow");
-    row.innerHTML=`<div class="av">${avatarOf(p)}</div>
-      <div class="t"><b>${esc(p.name)}</b><span>Blocked ${esc(dayPhrase(bk.at).toLowerCase())}${bk.reason?" · "+esc(bk.reason):""}</span></div>`;
+    row.innerHTML=`<div class="av">${p?avatarOf(p):`<span class="ph">${esc(initials(name))}</span>`}</div>
+      <div class="t"><b>${esc(name)}</b><span>Blocked ${esc(dayPhrase(bk.at).toLowerCase())}${bk.reason?" · "+esc(bk.reason):""}</span></div>`;
     const un=el("button","minibtn","Unblock");
-    un.onclick=()=>{unblockUser(bk.id);openBlocked();refreshDiscover();renderFeed();renderYou();toast("Unblocked "+p.name.split(" ")[0])};
+    un.onclick=async()=>{
+      un.disabled=true;un.textContent="…";
+      const ok=await unblockUser(bk.id);
+      if(!ok){un.disabled=false;un.textContent="Unblock";return}
+      openBlocked();refreshDiscover();renderFeed();renderYou();
+      if(LIVE){refreshFeed(true);loadDeckSoon&&loadDeckSoon()}
+      toast("Unblocked "+String(name).split(" ")[0]);
+    };
     row.appendChild(un);host.appendChild(row);
   });
   if(!list.length)host.appendChild(el("div","empty",`<p style="font-size:13.5px">Blocking is instant and silent — they're never told.</p>`));
@@ -6579,6 +6625,7 @@ const DB = {
 
   /* ---- safety ---- */
   disconnect(id){ return JammyAPI.safety.disconnect(id); },
+  blocked(){ return JammyAPI.safety.blocked(); },
   block(id){ return JammyAPI.safety.block(id); },
   unblock(id){ return JammyAPI.safety.unblock(id); },
   blockedList(){ return JammyAPI.safety.blocked(); },
@@ -6788,7 +6835,7 @@ function renderStep(){
           /* Signed in. If a profile already exists, this is a returning
              user and the rest of onboarding is just in their way. */
           const me=await DB.loadMe();
-          if(me.data){adoptProfile(me.data);S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();loadMyTracks();loadRising();watchFeed();
+          if(me.data){adoptProfile(me.data);S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();loadMyTracks();loadRising();watchFeed();loadBlocks();
             $("#onb").classList.remove("on");go("disc");toast("Welcome back");return}
         }
         obGo(3);toast("Verified");
@@ -6981,7 +7028,7 @@ async function finishOnboarding(){
   }else if(obDraft.loc){
     S.me.loc=obDraft.loc;
   }
-  S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();loadMyTracks();loadRising();watchFeed();obGo(10);
+  S.onboarded=true;save();renderAll();loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();loadMyTracks();loadRising();watchFeed();loadBlocks();obGo(10);
 }
 $("#ob-back").onclick=()=>obGo(obStep-1);
 $("#ob-skip").onclick=()=>obGo(obStep+1);
@@ -7015,7 +7062,7 @@ async function resumeSession(){
   if(me.data){
     adoptProfile(me.data);S.onboarded=true;save();
     $("#onb").classList.remove("on");renderAll();
-    loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();loadMyTracks();loadRising();watchFeed();
+    loadDeck();loadConvos();loadRequests();loadBands();loadBandRequests();loadFeed();loadChart();loadMyTracks();loadRising();watchFeed();loadBlocks();
     setTimeout(()=>locateOnLaunch(),250);
   }else{
     /* Signed in, but the profile was never finished — drop them back
