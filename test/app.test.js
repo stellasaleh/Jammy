@@ -1828,12 +1828,12 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
        conversation has to be in the fake, or S.connections comes back
        empty from loadConvos() and this passes for the wrong reason. */
     const { w } = await boot(true, signedIn({
-      convos: [{ conversation_id: "ch", kind: "dm", band_id: null, other_id: "p1",
+      convos: [{ conversation_id: "ch", kind: "dm", band_id: null, other_id: "hasan-1",
                  other_name: "Hasan Oro", other_handle: "hasanoro", other_city: "Boston",
                  other_photo: null, band_name: null, last_body: "sunday?",
                  last_clip_label: null, last_duration_ms: null, last_sender_id: "p1",
                  last_at: "2026-11-25T11:00:00Z", unread: 0 }],
-      serverBlocks: [{ blocked_id: "p1", created_at: "2026-11-24T10:00:00Z",
+      serverBlocks: [{ blocked_id: "hasan-1", created_at: "2026-11-24T10:00:00Z",
                        display_name: "Hasan Oro", handle: "hasanoro", city: "Boston" }],
     }));
     await wait(400);
