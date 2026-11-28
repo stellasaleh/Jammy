@@ -1807,6 +1807,71 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     ok(/Hasan/.test(txt), "and it is still listed, with an Unblock button");
   }
 
+  /* ------------------------------------------------------------
+     UNBLOCKING SAYS WHERE THE PERSON WENT
+
+     Stella blocked Hasan, unblocked him, went looking in Discover,
+     could not find him, and reported the app broken. The database
+     said otherwise: 0 blocks, and Ragtime Kid still connected to
+     Hasan Oro since the 24th. He was in Messages the whole time.
+
+     Discover was right to skip him — it hides anyone you have
+     already swiped on, because it is for finding NEW people. Every
+     part of this worked, and the person who built the app still
+     could not find her friend. "Unblocked Hasan" is a true sentence
+     that answers the wrong question.
+     ------------------------------------------------------------ */
+  console.log("\n55a10c. UNBLOCKING SAYS WHERE THEY WENT");
+  {
+    /* Still connected afterwards — the real case, since blocking never
+       deletes the connection, it only hides the conversation. The
+       conversation has to be in the fake, or S.connections comes back
+       empty from loadConvos() and this passes for the wrong reason. */
+    const { w } = await boot(true, signedIn({
+      convos: [{ conversation_id: "ch", kind: "dm", band_id: null, other_id: "p1",
+                 other_name: "Hasan Oro", other_handle: "hasanoro", other_city: "Boston",
+                 other_photo: null, band_name: null, last_body: "sunday?",
+                 last_clip_label: null, last_duration_ms: null, last_sender_id: "p1",
+                 last_at: "2026-11-25T11:00:00Z", unread: 0 }],
+      serverBlocks: [{ blocked_id: "p1", created_at: "2026-11-24T10:00:00Z",
+                       display_name: "Hasan Oro", handle: "hasanoro", city: "Boston" }],
+    }));
+    await wait(400);
+    w.__peek("openBlocked()"); await wait(200);
+    ok(/Hasan/.test(w.document.querySelector("#sheetbody").textContent),
+       "Hasan is listed as blocked");
+
+    [...w.document.querySelectorAll("#sheetbody .minibtn")]
+      .find((b) => /Unblock/i.test(b.textContent)).click();
+    await wait(600);
+
+    const t = w.document.querySelector("#toast").textContent;
+    ok(/back in Messages/i.test(t),
+       "and unblocking points you at Messages, where they actually are",
+       "toast said: " + t);
+    ok(!/Discover/i.test(t),
+       "not at Discover, which will never show somebody you know");
+  }
+
+  console.log("\n55a10d. AND SAYS DISCOVER when you are NOT connected");
+  {
+    const { w } = await boot(true, signedIn({
+      convos: [],
+      serverBlocks: [{ blocked_id: "zz-stranger", created_at: "2026-11-24T10:00:00Z",
+                       display_name: "A Stranger", handle: "stranger", city: "Boston" }],
+    }));
+    await wait(400);
+    w.__peek("openBlocked()"); await wait(200);
+    [...w.document.querySelectorAll("#sheetbody .minibtn")]
+      .find((b) => /Unblock/i.test(b.textContent)).click();
+    await wait(600);
+
+    const t = w.document.querySelector("#toast").textContent;
+    ok(/Discover/i.test(t),
+       "somebody you were never connected to goes back in the deck",
+       "toast said: " + t);
+  }
+
   console.log("\n55a11. AND LEARNS ABOUT ONE MADE ELSEWHERE");
   {
     const { w, api } = await boot(true, signedIn({

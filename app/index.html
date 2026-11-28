@@ -1769,7 +1769,7 @@ function remember(list){(list||[]).forEach(p=>{if(p&&p.id)KNOWN.set(p.id,p)});re
 /* Bump this on every deploy. It shows at the bottom of Settings, so a
    tester can read it out and settle whether they are on the new build
    before anybody starts debugging a bug that was fixed yesterday. */
-const BUILD="2026-11-27b";
+const BUILD="2026-11-27c";
 
 const POOL=()=>LIVE?LIVEPOOL:ARTISTS;
 const A=id=>POOL().find(x=>x.id===id)||KNOWN.get(id)||ARTISTS.find(x=>x.id===id)||
@@ -5522,7 +5522,15 @@ async function unblockUser(id){
     toast("Couldn't unblock them — "+authMessage(r.error));
     return false;
   }
-  loadConvos();
+  /*  AWAITED, deliberately.
+
+      Blocking hides your conversation; it never deletes the
+      connection. So unblocking brings the conversation back, and
+      loadConvos() is what rebuilds S.connections from the server.
+      Until it finishes, this phone still thinks you are not
+      connected — and the caller wants to tell the person where
+      their friend went, which it cannot do with a stale answer. */
+  await loadConvos();
   return true;
 }
 
@@ -6151,7 +6159,23 @@ function openBlocked(){
       if(!ok){un.disabled=false;un.textContent="Unblock";return}
       openBlocked();refreshDiscover();renderFeed();renderYou();
       if(LIVE){refreshFeed(true);loadDeckSoon&&loadDeckSoon()}
-      toast("Unblocked "+String(name).split(" ")[0]);
+      /*  Say where they went.
+
+          Stella blocked Hasan, unblocked him, then went looking for
+          him in Discover and could not find him — and reported the
+          app broken. It was not: they were still connected the whole
+          time, so he was back in Messages, and Discover had quietly
+          and correctly skipped him because you do not re-swipe
+          somebody you already know.
+
+          Everything worked and the person who BUILT it still could
+          not find her friend. "Unblocked Hasan" is a true sentence
+          that answers the wrong question. The question is: so where
+          is he now? */
+      const first=String(name).split(" ")[0];
+      toast(connected(bk.id)
+        ?"Unblocked "+first+" — you're still connected, so they're back in Messages"
+        :"Unblocked "+first+" — they can show up in Discover again");
     };
     row.appendChild(un);host.appendChild(row);
   });
