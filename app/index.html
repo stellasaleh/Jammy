@@ -1766,6 +1766,11 @@ function bandMembers(b){return ((b&&b.members)||[]).map(m=>m.id?{...m,p:A(m.id)}
 let LIVEPOOL=[];
 const KNOWN=new Map();
 function remember(list){(list||[]).forEach(p=>{if(p&&p.id)KNOWN.set(p.id,p)});return list}
+/* Bump this on every deploy. It shows at the bottom of Settings, so a
+   tester can read it out and settle whether they are on the new build
+   before anybody starts debugging a bug that was fixed yesterday. */
+const BUILD="2026-11-27b";
+
 const POOL=()=>LIVE?LIVEPOOL:ARTISTS;
 const A=id=>POOL().find(x=>x.id===id)||KNOWN.get(id)||ARTISTS.find(x=>x.id===id)||
             (id==="me"||id===(S.me&&S.me.id)?S.me:null);
@@ -3178,7 +3183,33 @@ async function loadBlocks(){
   const r=await DB.blocked();
   if(r.error||!Array.isArray(r.data))return;     /* keep what we have */
   const serverIds=r.data.map(b=>b.blocked_id);
-  const keep=(S.blocks||[]).filter(b=>serverIds.includes(b.id));
+
+  /*  An EMPTY server list is never allowed to delete your blocks.
+
+      This function runs on every tab focus, and it used to treat
+      whatever the server said as the whole truth. That is right when
+      the server is answering properly — it is how unblocking on
+      another device reaches this one. It was badly wrong while the
+      old my_blocks() returned nothing to everybody: block somebody,
+      switch apps, come back, and the block was gone, with no error
+      and nothing on screen to explain it.
+
+      The two mistakes are not equally bad. Keeping a block that was
+      lifted elsewhere leaves a stale row you can unblock again in one
+      tap. Dropping a block that is real puts somebody you blocked
+      back in front of you. So an empty reply is treated as "the
+      server could not tell me", and we keep what we have.
+
+      A non-empty reply is still honoured exactly, which covers the
+      real case: unblock one of several people on another device and
+      this one catches up on the next focus. The one gap left is
+      unblocking your LAST remaining person elsewhere — that row
+      survives here until you unblock it again or sign in afresh.
+      Worth it. */
+  const trustServer=r.data.length>0;
+  const keep=trustServer
+    ?(S.blocks||[]).filter(b=>serverIds.includes(b.id))
+    :(S.blocks||[]).slice();
   const byId=new Map(keep.map(b=>[b.id,b]));
   r.data.forEach(b=>{
     /* my_blocks() carries the name, so attach it to rows we already
@@ -4811,6 +4842,16 @@ function renderYou(){
   reset.onclick=()=>LIVE?openDeleteAccount():clearThisDevice();
   set.appendChild(reset);
   set.appendChild(el("p","dimtext",`Jammy is free. Sponsored posts from music brands and venues pay for it — see the orange and green cards in the feed.`)).style.fontSize="12.5px";
+  /* The build stamp.
+
+     Phones and browsers cache this file hard, so a tester can be looking
+     at a copy of the app from days ago while swearing a fixed bug is
+     still there — and there was no way to tell from the outside. That
+     cost a whole round of "is it fixed?" / "no" / "are you sure you
+     refreshed?". Now the answer is on screen: ask them what this says.
+     BUILD is bumped by hand on every deploy. */
+  set.appendChild(el("p","dimtext",`Version ${esc(BUILD)}`)).style.cssText=
+    "font-size:11.5px;margin-top:2px;opacity:.65";
   y.appendChild(set);
 }
 /* The signed-out demo has nothing on a server to delete, so the button

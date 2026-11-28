@@ -1747,22 +1747,64 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
      ------------------------------------------------------------ */
   console.log("\n55a10. THE BLOCKED LIST AGREES WITH THE SERVER");
   {
-    const { w, api } = await boot(true, signedIn({ serverBlocks: [] }));
+    /* The server answers properly and names somebody else. A list with
+       anything in it is trusted exactly, which is how unblocking on
+       another device reaches this one. */
+    const { w, api } = await boot(true, signedIn({
+      serverBlocks: [{ blocked_id: "p8", created_at: "2026-11-02T10:00:00Z",
+                       display_name: "Dana", handle: "dana", city: "Boston" }],
+    }));
     await wait(350);
     ok(api._log.includes("blocked"), "the app asks the server who is blocked");
 
-    /* Now put this phone in the state the bug leaves it in: a block in
-       local storage that the server does not have. boot() takes no
-       starting state, so set it directly — otherwise S.blocks is empty
-       and the check below passes without testing anything. */
+    /* Put this phone in the state the bug leaves it in: a block in local
+       storage that the server does not have. boot() takes no starting
+       state, so set it directly — otherwise S.blocks is empty and the
+       check below passes without testing anything. */
     w.__peek('S.blocks = [{id:"p9",reason:null,note:"",at:"2026-11-01T10:00:00Z"}]');
     await wait(30);
-    ok((w.__peek("S.blocks") || []).length === 1, "this phone thinks somebody is blocked");
+    ok((w.__peek("S.blocks") || []).some((b) => b.id === "p9"),
+       "this phone thinks somebody is blocked");
 
     w.__peek("loadBlocks()"); await wait(400);
-    ok((w.__peek("S.blocks") || []).length === 0,
-       "and a block the server does not have is dropped",
-       "it used to hide that person's posts for ever, with nothing on screen to say why");
+    const ids = (w.__peek("S.blocks") || []).map((b) => b.id);
+    ok(!ids.includes("p9"),
+       "a block the server has dropped is dropped here too",
+       "a block lifted elsewhere used to hide that person's posts for ever");
+    ok(ids.includes("p8"), "and the one the server does have is kept");
+  }
+
+  /* ------------------------------------------------------------
+     AN EMPTY ANSWER IS NOT AN ANSWER
+
+     loadBlocks() runs on every tab focus, and it used to treat
+     whatever came back as the whole truth. While the old my_blocks()
+     returned nothing to everybody, that meant: block somebody, switch
+     apps, come back, and the block was silently gone. Stella hit this
+     — she blocked a tester and Blocked accounts was empty.
+
+     The two mistakes are not equally bad. Keeping a block that was
+     lifted elsewhere leaves a stale row you can clear in one tap.
+     Dropping a block that is real puts somebody you blocked back in
+     front of you. So an empty reply now means "the server could not
+     tell me", and the phone keeps what it has.
+     ------------------------------------------------------------ */
+  console.log("\n55a10b. AN EMPTY REPLY NEVER UN-BLOCKS ANYBODY");
+  {
+    const { w } = await boot(true, signedIn({ serverBlocks: [] }));
+    await wait(350);
+    w.__peek('S.blocks = [{id:"p9",reason:null,note:"",at:"2026-11-01T10:00:00Z",name:"Hasan"}]');
+    await wait(30);
+
+    w.__peek("loadBlocks()"); await wait(400);
+    ok((w.__peek("S.blocks") || []).some((b) => b.id === "p9"),
+       "a block survives a server that says you have blocked nobody",
+       "this is the bug that emptied Stella's Blocked accounts screen");
+
+    /* and the screen still draws it, so she can clear it herself */
+    w.__peek("openBlocked()"); await wait(200);
+    const txt = w.document.querySelector("#sheetbody").textContent;
+    ok(/Hasan/.test(txt), "and it is still listed, with an Unblock button");
   }
 
   console.log("\n55a11. AND LEARNS ABOUT ONE MADE ELSEWHERE");
@@ -2033,6 +2075,28 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     w.document.querySelector("#rp-send").click(); await wait(400);
     ok(api._log.some((l) => l.startsWith("report:")),
        "and the report reaches the server — it only ever needed the id");
+  }
+
+  /* ------------------------------------------------------------
+     THE BUILD STAMP
+
+     Phones cache this file hard. A tester can be looking at a copy
+     from days ago while swearing a fixed bug is still there, and
+     from the outside there was no way to tell. That cost a full
+     round of "is it fixed?" / "no" / "are you sure you refreshed?".
+     Now it is on screen and they can read it out.
+     ------------------------------------------------------------ */
+  console.log("\n55z. THE VERSION IS ON SCREEN so a tester can read it out");
+  {
+    const { w } = await boot(true, signedIn({ convos: [] }));
+    await wait(250);
+    w.__peek('go("you")'); await wait(300);
+    const txt = w.document.querySelector("#you").textContent;
+    const build = w.__peek("BUILD");
+    ok(typeof build === "string" && build.length > 3, "the app knows its build", String(build));
+    ok(txt.includes("Version " + build),
+       "and prints it at the bottom of Settings",
+       "without it, nobody can tell a stale cache from an unfixed bug");
   }
 
   console.log("\n56f. THE BELL still tells you about their message");
